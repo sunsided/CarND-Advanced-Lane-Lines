@@ -28,7 +28,7 @@ class CameraCalibration:
         image_paths = glob.glob(file_pattern)
         obj_points, img_points, img_size = CameraCalibration.__find_chessboard_patterns_in_files(
             image_paths, inner_corner_dims)
-        roi = [0, 0, img_size.width, img_size.height]
+        roi = (0, 0, img_size.width, img_size.height)
         _, mtx, coeffs, _, _ = cv2.calibrateCamera(obj_points, img_points, img_size, None, None)
         refined_mtx, refined_roi = cv2.getOptimalNewCameraMatrix(mtx, coeffs, img_size, alpha=1, newImgSize=img_size)
         return CameraCalibration(coeffs, mtx, roi, refined_mtx, refined_roi)
@@ -163,16 +163,24 @@ if __name__ == '__main__':
 
     # Let's run some tests.
     cv2.namedWindow('Images', cv2.WINDOW_NORMAL)
-    files = glob.glob(os.path.join(path, 'calibration*.jpg'))
+
+    sample_path = os.path.join('..', 'test_images')
+    files = glob.glob(os.path.join(sample_path, '*.jpg'))
+    files.extend(glob.glob(os.path.join(path, 'calibration*.jpg')))
+
     for file in files:
         img = cv2.imread(file)
 
         # Note that the images need to be the exact same size that was seen during calibration.
         undistorted, roi = cc2.undistort(img)
 
+        top_left = roi[:2]
+        bottom_right = (roi[2] + roi[0], roi[3] + roi[1])
+        cv2.rectangle(undistorted, top_left, bottom_right, color=(0, 0, 255), thickness=2)
+
         img = np.hstack([img, undistorted])
         cv2.imshow('Images', img)
-        if cv2.waitKey(2000) == 27:
+        if cv2.waitKey(0) == 27:
             break
 
     cv2.destroyAllWindows()
