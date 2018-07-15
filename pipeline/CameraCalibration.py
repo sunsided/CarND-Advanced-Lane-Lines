@@ -8,6 +8,7 @@ from typing import Optional, Tuple, List, NamedTuple
 ObjectPointList = List[np.ndarray]
 ImagePointList = List[np.ndarray]
 ImageSize = NamedTuple('ImageSize', [('width', int), ('height', int)])
+Rectangle = Tuple[int, int, int, int]
 
 
 class CameraCalibration:
@@ -92,8 +93,8 @@ class CameraCalibration:
         ret, corners = cv2.findChessboardCorners(img, inner_corner_dims, None)
         return corners if ret else None
 
-    def __init__(self, coeffs: np.ndarray, mtx: np.ndarray, roi: List[int],
-                 refined_mtx: Optional[np.ndarray] = None, refined_roi: Optional[List[int]] = None):
+    def __init__(self, coeffs: np.ndarray, mtx: np.ndarray, roi: Rectangle,
+                 refined_mtx: Optional[np.ndarray] = None, refined_roi: Optional[Rectangle] = None):
         """
         Initializes this instance.
         :param coeffs: The distortion coefficients.
@@ -121,6 +122,7 @@ class CameraCalibration:
         if refined and self._refined_mtx is not None:
             refined_mtx = self._refined_mtx
             roi = self._refined_roi
+        # noinspection PyTypeChecker
         return cv2.undistort(img, mtx, self._coeffs, None, refined_mtx), roi
 
     def pickle(self, path: str) -> None:
@@ -140,7 +142,7 @@ class CameraCalibration:
             pickle.dump(params, f)
 
 
-if __name__ == '__main__':
+def __main():
     # Perform calibration once
     path = os.path.join('..', 'camera_cal')
     cc = CameraCalibration.calibrate_from_files(path, (9, 6))
@@ -156,9 +158,13 @@ if __name__ == '__main__':
     os.unlink(test_pickle)
 
     # Ensure the results are identical
+    # noinspection PyProtectedMember
     assert np.all(np.equal(cc2._mtx, cc._mtx))
+    # noinspection PyProtectedMember
     assert np.all(np.equal(cc2._refined_mtx, cc._refined_mtx))
+    # noinspection PyProtectedMember
     assert np.all(np.equal(cc2._coeffs, cc._coeffs))
+    # noinspection PyProtectedMember
     assert np.all(np.equal(cc2._roi, cc._roi))
 
     # Let's run some tests.
@@ -184,3 +190,7 @@ if __name__ == '__main__':
             break
 
     cv2.destroyAllWindows()
+
+
+if __name__ == '__main__':
+    __main()
