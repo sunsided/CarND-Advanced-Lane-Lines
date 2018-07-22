@@ -76,10 +76,10 @@ class BirdsEyeView:
         self._pixels_per_unit = self._base_width / section_width
         self._units_per_pixel = 1.0 / self._pixels_per_unit
         dst = np.array([
-            [section_width, 0],
             [section_width * 2, 0],
-            [section_width * 2, section_height],
-            [section_width, section_height]
+            [section_width * 3, 0],
+            [section_width * 3, section_height],
+            [section_width * 2, section_height]
         ]) * self._pixels_per_unit
 
         self._projected_height = np.ceil(dst.max()).astype(int)
@@ -92,7 +92,7 @@ class BirdsEyeView:
         :param img: The image to warp
         :return: The warped image.
         """
-        warped = cv2.warpPerspective(img, self._M, (3 * self._base_width, self._projected_height))
+        warped = cv2.warpPerspective(img, self._M, (5 * self._base_width, self._projected_height))
         return warped
 
     def unwarp(self, img: np.ndarray, size: Size) -> np.ndarray:

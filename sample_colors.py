@@ -5,12 +5,13 @@ given their overall appearance.
 
 import csv
 import os
-import glob
 from typing import List
 
 import cv2
 import numpy as np
 from notebooks.scripts.histogram import histogram_vec
+
+from pipeline import CameraCalibration, BirdsEyeView, ImageSection, Point
 
 RETURN = 13
 SPACE = 32
@@ -84,6 +85,19 @@ def onMouse(event, x, y, flags, params):
 def main():
     basename = os.path.splitext(os.path.basename(PATH))[0]
 
+    cc = CameraCalibration.from_pickle('calibration.pkl')
+
+    section = ImageSection(
+        top_left=Point(x=580, y=461.75),
+        top_right=Point(x=702, y=461.75),
+        bottom_right=Point(x=1013, y=660),
+        bottom_left=Point(x=290, y=660),
+    )
+
+    bev = BirdsEyeView(section,
+                       section_width=3.6576,  # one lane width in meters
+                       section_height=2 * 13.8826)  # two dash distances in meters
+
     cap = cv2.VideoCapture(PATH)
     length = cap.get(cv2.CAP_PROP_FRAME_COUNT)
     current_pos, last_pos = 0, None
@@ -100,6 +114,12 @@ def main():
         if not ret:
             print('End of video.')
             break
+
+        img, _ = cc.undistort(img, False)
+        img = bev.warp(img)
+
+        # Stretch for better sampling
+        img = cv2.resize(img, (0, 0), fx=3, fy=1)
 
         current_pos = cap.get(cv2.CAP_PROP_POS_FRAMES)
         if last_pos != current_pos:

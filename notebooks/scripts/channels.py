@@ -5,7 +5,7 @@ import seaborn as sns
 
 
 def show_single_image(img: np.ndarray):
-    plt.imshow(img)
+    plt.imshow(img, cmap='gray')
     plt.tight_layout()
     sns.despine()
 

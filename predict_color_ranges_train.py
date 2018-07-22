@@ -12,8 +12,8 @@ from sklearn.externals import joblib
 
 
 NBINS = 16
-BATCH_SIZE = 100
-EPOCHS = 100
+BATCH_SIZE = 0
+EPOCHS = 500
 INCLUDE_ACTUAL_SAMPLES = False
 
 
@@ -49,10 +49,10 @@ def main():
     yuv_mean = np.mean(Ys, axis=0)
     yuv_std = np.std(Ys, axis=0)
 
-    mlp = MLPRegressor(hidden_layer_sizes=(32, 24),
+    mlp = MLPRegressor(hidden_layer_sizes=(32, 16),
                        activation='logistic',
                        solver='lbfgs',
-                       alpha=0.01,
+                       alpha=0.1,
                        warm_start=True,
                        max_iter=10,
                        verbose=False)
@@ -62,7 +62,7 @@ def main():
         for i in range(0, count // batch_size):
             indexes = np.random.choice(range(count), batch_size, replace=False)
             Xs_, Ys_ = Xs[indexes, ...].copy(), Ys[indexes, ...].copy()
-            Xs_[:, 1:] += np.random.rand(Xs_.shape[0], 3 * NBINS) * 0.001
+            Xs_[:, 1:] += np.random.rand(Xs_.shape[0], 3 * NBINS) * 0.01
             Xs_[:, 1:] = (Xs_[:, 1:] - hist_mean) / hist_std
 
             Ys_ += np.random.rand(Ys_.shape[0], Ys_.shape[1]) * 0.0001
