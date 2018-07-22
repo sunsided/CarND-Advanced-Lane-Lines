@@ -16,6 +16,11 @@ RETURN = 13
 SPACE = 32
 BACKSPACE = 8
 
+NBINS = 16
+
+# PATH = 'harder_challenge_video.mp4'
+PATH = 'challenge_video.mp4'
+
 
 class Frame:
     def __init__(self, path: str, frame: int):
@@ -77,12 +82,12 @@ def onMouse(event, x, y, flags, params):
 
 
 def main():
-    path = 'harder_challenge_video.mp4'
-    cap = cv2.VideoCapture(path)
+    basename = os.path.splitext(os.path.basename(PATH))[0]
+
+    cap = cv2.VideoCapture(PATH)
     length = cap.get(cv2.CAP_PROP_FRAME_COUNT)
     current_pos, last_pos = 0, None
 
-    nbins = 16
     frame = None
     frames = []  # type: List[Frame]
 
@@ -103,12 +108,12 @@ def main():
 
             print('Video progress: {}/{} ({:.2f}%)'.format(current_pos, length, 100*current_pos/length))
             # Prepare the frame
-            frame = Frame(path, current_pos)
+            frame = Frame(PATH, current_pos)
             last_pos = current_pos
 
         # Take YUV histogram
         yuv = cv2.cvtColor(img, cv2.COLOR_BGR2YUV)
-        histogram = histogram_vec(yuv, nbins) / np.prod(yuv.shape[:2])
+        histogram = histogram_vec(yuv, NBINS) / np.prod(yuv.shape[:2])
         assert frame is not None
         frame.set_histogram(histogram)
 
@@ -133,9 +138,12 @@ def main():
     if frame is not None and frame.changed and ((len(frames) > 0 and frames[-1] != frame) or len(frames) == 0):
         frames.append(frame)
 
+    if len(frames) == 0:
+        return
+
     # Store the frames
-    with open('lane-samples.csv', 'w') as f:
-        hist_fields = ['h{}'.format(i) for i in range(0, 3 * nbins)]
+    with open('lane-samples-{}.csv'.format(basename), 'w') as f:
+        hist_fields = ['h{}'.format(i) for i in range(0, 3 * NBINS)]
         fieldnames = ['id', 'white', 'y', 'u', 'v', 'y_mean', 'u_mean', 'v_mean', 'y_std', 'u_std', 'v_std', *hist_fields]
         writer = csv.writer(f, fieldnames)
         writer.writerow(fieldnames)
