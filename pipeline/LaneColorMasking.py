@@ -67,6 +67,7 @@ class LaneColorMasking:
         :param channel: The channel to operate on.
         :return: The adjusted channel.
         """
+        channel = np.float32(channel / 255.)
         blurred = cv2.GaussianBlur(channel, (self._lc_kernel_size, self._lc_kernel_size), 0)
         adjusted = channel / (blurred + 0.001)
         vmin, vmax = adjusted.min(), adjusted.max()
