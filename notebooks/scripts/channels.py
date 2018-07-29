@@ -1,26 +1,76 @@
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
 import seaborn as sns
+from typing import Tuple
 
 
-def show_single_image(img: np.ndarray):
-    plt.imshow(img, cmap='gray')
+cmap_lab_l = LinearSegmentedColormap.from_list('L*', [(0, 0, 0), (1, 1, 1)], N=255)
+cmap_lab_a = LinearSegmentedColormap.from_list('a*', [(0, 1, 0), (1, 0, 0)], N=255)
+cmap_lab_b = LinearSegmentedColormap.from_list('b*', [(1, 1, 0), (0, 0, 1)], N=255)
+
+
+def bgr2lab(bgr: np.ndarray) -> np.ndarray:
+    return cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
+
+
+def show_single_image(img: np.ndarray, preview: bool=False, size: Tuple[int, int] = (8, 8), cmap='gray',
+                      colorbar: bool=False):
+    if preview:
+        pixels, max_pixels = np.prod(img.shape[:2]), 1024*768
+        if pixels > max_pixels:
+            scale = max_pixels / pixels
+            img = cv2.resize(img, (0, 0), fx=scale, fy=scale)
+    f, ax = plt.subplots(nrows=1, ncols=1, figsize=size)
+    p = ax.imshow(img, cmap=cmap)
     plt.tight_layout()
     sns.despine()
+    if colorbar:
+        plt.colorbar(p)
 
 
-def show_channels(img, title0: str, title1: str, title2: str):
-    f, axs = plt.subplots(nrows=1, ncols=3, figsize=(16, 4))
-    cmap = 'gray'
-    axs[0].imshow(img[..., 0], cmap=cmap)
-    axs[1].imshow(img[..., 1], cmap=cmap)
-    axs[2].imshow(img[..., 2], cmap=cmap)
+def show_two_images(img: np.ndarray, img2: np.ndarray, preview: bool=False, size: Tuple[int, int] = (9, 8),
+                    vmin=None, vmax=None, cmap: str='gray', cmap0=None, cmap1=None, colorbar: bool=False):
+    if preview:
+        pixels, max_pixels = np.prod(img.shape[:2]), 1024*768
+        if pixels > max_pixels:
+            scale = max_pixels / pixels
+            img = cv2.resize(img, (0, 0), fx=scale, fy=scale)
+        pixels, max_pixels = np.prod(img2.shape[:2]), 1024 * 768
+        if pixels > max_pixels:
+            scale = max_pixels / pixels
+            img2 = cv2.resize(img2, (0, 0), fx=scale, fy=scale)
+    f, axs = plt.subplots(nrows=1, ncols=2, figsize=size)
+    a = axs[0].imshow(img, cmap=cmap0 or cmap, vmin=vmin, vmax=vmax)
+    b = axs[1].imshow(img2, cmap=cmap1 or cmap, vmin=vmin, vmax=vmax)
+    plt.tight_layout()
+    sns.despine()
+    if colorbar:
+        plt.colorbar(a, ax=axs[0])
+        plt.colorbar(b, ax=axs[1])
+
+
+def show_channels_lab(lab, size: Tuple[int, int]=(16, 8), vmin=None, vmax=None):
+    show_channels(lab, 'L*', 'a* (green-red)', 'b* (yellow-blue)',
+                  size, cmap0=cmap_lab_l, cmap1=cmap_lab_a, cmap2=cmap_lab_b, vmin=vmin, vmax=vmax)
+
+
+def show_channels(img, title0: str, title1: str, title2: str, size: Tuple[int, int] = (16, 4), cmap: str='gray',
+                  vmin=None, vmax=None,
+                  cmap0=None, cmap1=None, cmap2=None):
+    f, axs = plt.subplots(nrows=1, ncols=3, figsize=size)
+    a = axs[0].imshow(img[..., 0], cmap=cmap0 or cmap, vmin=vmin, vmax=vmax)
+    b = axs[1].imshow(img[..., 1], cmap=cmap1 or cmap, vmin=vmin, vmax=vmax)
+    c = axs[2].imshow(img[..., 2], cmap=cmap2 or cmap, vmin=vmin, vmax=vmax)
     axs[0].set_title(title0)
     axs[1].set_title(title1)
     axs[2].set_title(title2)
     plt.tight_layout()
     sns.despine()
+    plt.colorbar(a, ax=axs[0])
+    plt.colorbar(b, ax=axs[1])
+    plt.colorbar(c, ax=axs[2])
 
 
 def channel_gallery(bgr: np.ndarray) -> None:
