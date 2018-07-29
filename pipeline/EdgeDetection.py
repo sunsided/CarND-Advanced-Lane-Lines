@@ -19,13 +19,13 @@ class EdgeDetection:
         self._kernel_width = lane_width
         self._kernel_pad = kernel_width - lane_width
         self._morphological_filtering = morphological_filtering
-        self._detect_lines = detect_lines
-        self._hough_line_support = 60
-        self._hough_line_length = 20
-        self._hough_line_gap = 5
-        self._canny_lo = 64
-        self._canny_hi = 180
-        self._filter_threshold = .04
+        self.detect_lines = detect_lines
+        self.hough_line_support = 60
+        self.hough_line_length = 20
+        self.hough_line_gap = 5
+        self.canny_lo = 64
+        self.canny_hi = 180
+        self.filter_threshold = .08
         self._kernel = self._build_kernel(self._kernel_width, self._kernel_pad)
 
     def filter(self, img: np.ndarray, is_lab: bool=False) -> np.ndarray:
@@ -43,7 +43,7 @@ class EdgeDetection:
         # to enforce large areas of uniform lightness, followed by a confined lightness bump.
         # This both serves the purpose of detecting edges and suppressing uninteresting candidates.
         filtered = cv2.filter2D(np.float32(li) / 255., cv2.CV_32F, self._kernel)
-        filtered[filtered < self._filter_threshold] = 0
+        filtered[filtered < self.filter_threshold] = 0
         filtered = np.power(filtered, 1/4)
         if self._roi_mask is not None:
             filtered *= self._roi_mask
@@ -60,14 +60,14 @@ class EdgeDetection:
         filtered = self.filter(img, is_lab)
 
         # Detect edges
-        edges = cv2.Canny(np.uint8(filtered * 255), self._canny_lo, self._canny_hi)
+        edges = cv2.Canny(np.uint8(filtered * 255), self.canny_lo, self.canny_hi)
         if self._morphological_filtering:
             edges = cv2.morphologyEx(edges, cv2.MORPH_BLACKHAT, np.ones(shape=(5, 5)))
             edges = cv2.medianBlur(edges, 3)
 
-        if self._detect_lines:
-            lines = cv2.HoughLinesP(edges, 1, np.pi / 90, self._hough_line_support,
-                                    minLineLength=self._hough_line_length, maxLineGap=self._hough_line_gap)
+        if self.detect_lines:
+            lines = cv2.HoughLinesP(edges, 1, np.pi / 90, self.hough_line_support,
+                                    minLineLength=self.hough_line_length, maxLineGap=self.hough_line_gap)
             edge_lines = np.zeros_like(edges)
             for line in lines:
                 x1, y1, x2, y2 = line[0]

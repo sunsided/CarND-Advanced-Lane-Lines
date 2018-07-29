@@ -16,14 +16,14 @@ def bgr2lab(bgr: np.ndarray) -> np.ndarray:
 
 
 def show_single_image(img: np.ndarray, preview: bool=False, size: Tuple[int, int] = (8, 8), cmap='gray',
-                      colorbar: bool=False):
+                      colorbar: bool=False, vmin=None, vmax=None):
     if preview:
         pixels, max_pixels = np.prod(img.shape[:2]), 1024*768
         if pixels > max_pixels:
             scale = max_pixels / pixels
             img = cv2.resize(img, (0, 0), fx=scale, fy=scale)
     f, ax = plt.subplots(nrows=1, ncols=1, figsize=size)
-    p = ax.imshow(img, cmap=cmap)
+    p = ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax)
     plt.tight_layout()
     sns.despine()
     if colorbar:
