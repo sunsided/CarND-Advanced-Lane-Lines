@@ -70,7 +70,7 @@ def apply_swt(im: Image, edges: Image, gradients: Gradients, min_length: float=0
     :return: The transformed image.
     """
     # Prepare the output map.
-    swt = np.squeeze(np.ones_like(im)) * np.Infinity
+    swt = np.squeeze(np.zeros_like(im))
 
     # For each pixel, let's obtain the normal direction of its gradient.
     # We add some epsilon to the norms to avoid numerical instabilities.
@@ -99,16 +99,13 @@ def apply_swt(im: Image, edges: Image, gradients: Gradients, min_length: float=0
             if ray:
                 rays.append(ray)
 
-    # Multiple rays may cross the same pixel and each pixel has the smallest
-    # stroke width of those.
-    # In OCR, the median of the rays will be taken at this point. For computational
-    # reasons and due to reduced complexity, we're going to use the mean instead.
+    # Multiple rays may cross the same pixel in scenarios where edges are due to noise.
+    # Each line crossing counts as a hit. By taking the inverse of each pixel, lines that
+    # are robust are counted fully, whereas erratic lines are reduced in intensity.
     for ray in rays:
-        value = np.mean([swt[p.y, p.x] for p in ray])
         for p in ray:
-            swt[p.y, p.x] = value
+            swt[p.y, p.x] = 255 / swt[p.y, p.x]
 
-    swt[swt == np.Infinity] = 0
     return swt
 
 
@@ -130,12 +127,6 @@ def _swt_process_pixel(pos: Position, edges: Image, directions: Gradients, out: 
     min_length_sq = min_length ** 2
     max_length_sq = max_length ** 2
 
-    # The direction in which we travel the gradient depends on the type of text
-    # we want to find. For dark text on light background, follow the opposite
-    # direction (into the dark are); for light text on dark background, follow
-    # the gradient as is.
-    gradient_direction = 1
-
     # Starting from the current pixel we will shoot a ray into the direction
     # of the pixel's gradient and keep track of all pixels in that direction
     # that still lie on an edge.
@@ -156,8 +147,8 @@ def _swt_process_pixel(pos: Position, edges: Image, directions: Gradients, out: 
     while True:
         # Advance to the next pixel on the line.
         steps_taken += 1
-        cur_x = int(np.floor(pos.x + gradient_direction * dir_x * steps_taken))
-        cur_y = int(np.floor(pos.y + gradient_direction * dir_y * steps_taken))
+        cur_x = int(np.floor(pos.x + dir_x * steps_taken))
+        cur_y = int(np.floor(pos.y + dir_y * steps_taken))
         cur_pos = Position(x=cur_x, y=cur_y)
         if cur_pos == prev_pos:
             continue
@@ -179,7 +170,7 @@ def _swt_process_pixel(pos: Position, edges: Image, directions: Gradients, out: 
         # If this edge is pointed in a direction approximately opposite of the
         # one we started in, it is approximately parallel. This means we
         # just found the other side of the stroke.
-        # The original paper suggests the gradients need to be opposite +/- PI/6.
+        # The original paper suggests the gradients need to be opposite +/- PI/6 (30 degree).
         # Since the dot product is the cosine of the enclosed angle and
         # cos(pi/6) = 0.8660254037844387, we can discard all values that exceed
         # this threshold.
@@ -190,9 +181,11 @@ def _swt_process_pixel(pos: Position, edges: Image, directions: Gradients, out: 
             return None
         if stroke_width_sq < min_length_sq:
             return None
-        stroke_width = np.sqrt(stroke_width_sq)
+        # In regular SWT, we would set this pixel to the currently longest stroke.
+        # Since we don't really care for stroke widths later, we just add up
+        # the number of times a stroke crossed this pixel.
         for p in ray:
-            out[p.y, p.x] = min(stroke_width, out[p.y, p.x])
+            out[p.y, p.x] += 1
         return ray
 
     # noinspection PyUnreachableCode
