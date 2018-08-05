@@ -14,10 +14,11 @@ from notebooks.scripts.histogram import histogram_vec
 from pipeline import CameraCalibration, BirdsEyeView, ImageSection, Point
 
 # Set to True to render a full video with the results
-EXPORT_VIDEO = True
+#EXPORT_VIDEO_TO = 'challenge_video_temporal_diff.mp4'
+#EXPORT_VIDEO_TO = 'harder_challenge_video_temporal_diff.mp4'
 
 PATH = 'harder_challenge_video.mp4'
-# PATH = 'challenge_video.mp4'
+#PATH = 'challenge_video.mp4'
 
 
 def get_mask(img: np.ndarray, range: np.ndarray, nstd: float) -> np.ndarray:
@@ -72,22 +73,33 @@ def main():
     def uint82float(img: np.ndarray, scale: float=255) -> np.ndarray:
         return np.float32(img) / scale
 
+    def rescale(img: np.ndarray) -> np.ndarray:
+        min_, max_ = img.min(), img.max()
+        return (img - min_) / (max_ - min_)
+
     def process_frame(img: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         nonlocal previous_edges, previous_grays_slow, previous_grays_fast
-        gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+        gray = lab[..., 0]
         gray = cv2.GaussianBlur(gray, (3, 3), 5)
+
+        # Equalize for edge detection
+        equalized = np.ma.masked_equal(gray, 0)
+        slice_height = 5
+        for y in range(0, gray.shape[0], slice_height):
+            top, bottom = y, y + slice_height
+            equalized[top:bottom, ...] = cv2.equalizeHist(equalized[top:bottom, ...])
+        gray = np.ma.filled(equalized, 0)
 
         if previous_grays_slow is None:
             temporally_smoothed_slow = gray
             temporally_smoothed_fast = gray
         else:
             alpha_slow = 0.1
-            temporally_smoothed_slow = alpha_slow*gray + (1-alpha_slow) * previous_grays_slow
+            temporally_smoothed_slow = alpha_slow * gray + (1-alpha_slow) * previous_grays_slow
 
-            alpha_fast = 0.5
+            alpha_fast = 0.8
             temporally_smoothed_fast = alpha_fast * gray + (1 - alpha_fast) * previous_grays_fast
-
-        #edges = np.float32(cv2.Canny(temporally_smoothed_slow, 64, 240)) / 255.
 
         # For edge detection we're going to need an integral image.
         temporally_smoothed_slow_8 = float2uint8(temporally_smoothed_slow, 1)
@@ -95,42 +107,56 @@ def main():
 
         # The reflections of the dashboard can be found mostly in vertical edges.
         ts_edges_y = np.sqrt((cv2.Scharr(temporally_smoothed_slow_8, cv2.CV_32F, 0, 1) / 255.)**2)
-        dasboard_mask = 1 - ts_edges_y
+        dashboard_mask = 1 - ts_edges_y
+        dashboard_mask = cv2.medianBlur(dashboard_mask, 5)
+        dashboard_mask = np.clip(dashboard_mask, 0, 1)
+
+        # Apply difference of gaussian edge detection.
+        inp_8 = cv2.morphologyEx(temporally_smoothed_fast_8, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
+        inp = np.float32(inp_8) / 255.
+        dog = cv2.GaussianBlur(inp, (9, 9), 5) - cv2.GaussianBlur(inp, (17, 17), 9)
+        dog = rescale(np.clip(dog, 0, 1)) * dashboard_mask
 
         # Obtain new edges.
-        edges_x = cv2.Sobel(temporally_smoothed_fast_8, cv2.CV_32F, 1, 0, ksize=3) / 255.
-        edges = np.sqrt(edges_x ** 2)
-        #edges = np.float32(cv2.Canny(temporally_smoothed_fast_8, 16, 160)) / 255.
-        #edges_x = cv2.Scharr(temporally_smoothed_fast_8, cv2.CV_32F, 1, 0) / 255.
-        #edges_y = np.zeros_like(edges_x) #cv2.Scharr(temporally_smoothed_fast_8, cv2.CV_32F, 0, 1) / 255.
-        #edges = np.sqrt(edges_x**2 + edges_y**2) * dasboard_mask
+        if previous_edges is None:
+            previous_edges = np.zeros_like(dog)
 
-        # Suppress all the edges detected due to the dashboard
-        edges *= dasboard_mask
+        edge_alpha = .4
+        edges_filtered = edge_alpha * dog + (1-edge_alpha) * previous_edges
+        edges_filtered = rescale(edges_filtered)
+        edges_filtered = cv2.GaussianBlur(edges_filtered, (5, 5), 5)
 
-        #if previous_edges is not None:
-        #    diff = 1 - np.sqrt((edges - previous_edges)**2)
-        #    diff = (diff - diff.min()) / (diff.max() - diff.min())
-        #else:
-        #    diff = np.ones_like(gray)
+        # Run canny on the pre-filtered edges
+        edges_filtered_8 = float2uint8(edges_filtered)
+        edges_canny_8 = cv2.Canny(edges_filtered_8, 64, 100)
 
-        #diff = float2uint8(diff)
-        #_, diff = cv2.threshold(diff, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        #diff = uint82float(diff)
+        # We perform blob detection; for this, we close nearby contours.
+        edges_contours_8 = cv2.morphologyEx(edges_canny_8, cv2.MORPH_BLACKHAT, np.ones((13, 13), np.uint8))
+        edges_contours_8 = cv2.morphologyEx(edges_contours_8, cv2.MORPH_ERODE, np.ones((2, 2), np.uint8))
+        m2, contours, hierarchy = cv2.findContours(edges_contours_8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        #edges_filtered = edges * diff
+        good_contours = []
+        ok_contours = []
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < 300:
+                continue
+            if area > 600:
+                good_contours.append(cnt)
+            else:
+                ok_contours.append(cnt)
 
-        edges = float2uint8(edges)
-        #edges_filtered = float2uint8(edges_filtered)
-
-        #diff = float2uint8(np.sqrt((uint82float(gray) - uint82float(previous_grays_slow)**2)))
+        filled = edges_canny_8 // 2
+        cv2.drawContours(filled, ok_contours, -1, 64, cv2.FILLED, cv2.LINE_4)
+        cv2.drawContours(filled, good_contours, -1, 255, cv2.FILLED, cv2.LINE_4)
 
         # Carry the current state on to the next time stamp
         previous_grays_fast = temporally_smoothed_fast
         previous_grays_slow = temporally_smoothed_slow
-        previous_edges = edges
+        previous_edges = edges_filtered
 
-        return temporally_smoothed_slow_8, edges #edges, edges_filtered
+        # Convert for returning
+        return edges_filtered_8, filled
 
     def video_process_frame(img: np.ndarray) -> np.ndarray:
         nonlocal previous_edges
@@ -139,23 +165,33 @@ def main():
 
         edges, filtered = process_frame(warped)
 
-        edges = bev.unwarp(edges, (img.shape[1], img.shape[0]))
-        filtered = bev.unwarp(filtered, (img.shape[1], img.shape[0]))
+        edges = cv2.cvtColor(edges, cv2.COLOR_GRAY2RGB)
+        edges[..., 2] = 0
 
-        frame = np.hstack([edges, filtered])
-        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+        filtered = cv2.cvtColor(filtered, cv2.COLOR_GRAY2RGB)
+        filtered[..., 0] = 0
 
-        img = cv2.resize(img, (0, 0), fx=0.5, fy=0.5)
-        left = frame.shape[1] // 2 - img.shape[1] // 2
-        frame[0:img.shape[0], left:left+img.shape[1], ...] = img
+        #edges = bev.unwarp(edges, (img.shape[1], img.shape[0]))
+        filtered_unwarped = bev.unwarp(filtered, (img.shape[1], img.shape[0]))
+
+        # Resize the original image to fit the on top of the unwarped filtered image.
+        frame_height = filtered.shape[0]
+        img_width = int(img.shape[1] * (frame_height / 2) / img.shape[0])
+        img = cv2.resize(img, (img_width, frame_height // 2))
+
+        # Resize the filtered image to fit underneath the original image
+        filtered_unwarped = cv2.resize(filtered_unwarped, (img.shape[1], img.shape[0]))
+
+        left = np.vstack([img, filtered_unwarped])
+        frame = np.hstack([left, edges, filtered])
 
         return frame
 
     # Process the video
-    if EXPORT_VIDEO:
+    if isinstance(EXPORT_VIDEO_TO, str):
         clip = VideoFileClip(PATH)  # .subclip(0, 5)
         clip = clip.fl_image(video_process_frame)
-        clip.write_videofile('test-edges.mp4', audio=False)
+        clip.write_videofile(EXPORT_VIDEO_TO, audio=False)
 
     cap = cv2.VideoCapture(PATH)
     window = 'Video'
@@ -163,6 +199,7 @@ def main():
 
     previous_edges = None
     previous_grays_slow = None
+    previous_grays_fast = None
     while True:
         ret, img = cap.read()
         if not ret:
