@@ -1,6 +1,6 @@
 """
-This script is used to sample yellow and white lane marker colors from images
-given their overall appearance.
+Temporally smoothed lane line proposals.
+See video at https://www.youtube.com/watch?v=n1aZLTyl9BI
 """
 
 import cv2
@@ -10,7 +10,6 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.externals import joblib
 from moviepy.editor import VideoFileClip
 
-from notebooks.scripts.histogram import histogram_vec
 from pipeline import CameraCalibration, BirdsEyeView, ImageSection, Point
 
 # Set to True to render a full video with the results
