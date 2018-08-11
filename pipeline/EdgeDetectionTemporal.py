@@ -122,7 +122,7 @@ class EdgeDetectionTemporal:
         self._previous_edges = edges_filtered
 
         self._edges_filtered = edges_filtered_8
-        return filled
+        return np.float32(filled * self._mask) / 255.
 
     @staticmethod
     def float2uint8(img: np.ndarray, scale: float=255) -> np.ndarray:
