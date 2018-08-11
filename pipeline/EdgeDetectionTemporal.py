@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from typing import Optional
+from .non_line_suppression import non_line_suppression
 
 
 class EdgeDetectionTemporal:
@@ -23,7 +24,7 @@ class EdgeDetectionTemporal:
         self._edge_gaussian_size = (5, 5)
         self._edge_canny_lo = 64
         self._edge_canny_hi = 100
-        self._edge_blackhat_kernel = np.ones((13, 13), np.uint8)
+        self._edge_blackhat_kernel = np.ones((17, 17), np.uint8)
         self._edge_erode_kernel = np.ones((2, 2), np.uint8)
         self._area_lo = 300
         self._area_hi = 600
@@ -65,7 +66,7 @@ class EdgeDetectionTemporal:
             temporally_smoothed_slow = self._alpha_slow * gray + (1 - self._alpha_slow) * self._previous_grays_slow
             temporally_smoothed_fast = self._alpha_fast * gray + (1 - self._alpha_fast) * self._previous_grays_fast
 
-            # For edge detection we're going to need an integral image.
+        # For edge detection we're going to need an integral image.
         temporally_smoothed_slow_8 = self.float2uint8(temporally_smoothed_slow, 1)
         temporally_smoothed_fast_8 = self.float2uint8(temporally_smoothed_fast, 1)
 
@@ -93,28 +94,8 @@ class EdgeDetectionTemporal:
         edges_filtered_8 = self.float2uint8(edges_filtered)
         edges_canny_8 = cv2.Canny(edges_filtered_8, self._edge_canny_lo, self._edge_canny_hi)
 
-        # We perform blob detection; for this, we close nearby contours.
-        edges_contours_8 = cv2.morphologyEx(edges_canny_8, cv2.MORPH_BLACKHAT, self._edge_blackhat_kernel)
-        edges_contours_8 = cv2.morphologyEx(edges_contours_8, cv2.MORPH_ERODE, np.ones((2, 2), np.uint8))
-        m2, contours, hierarchy = cv2.findContours(edges_contours_8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        # Contours below a specified area will be discarded.
-        # If the area is big enough, we count the contour as "good", otherwise
-        # we're just going to use it as an indicator.
-        good_contours = []
-        ok_contours = []
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area < self._area_lo:
-                continue
-            if area > self._area_hi:
-                good_contours.append(cnt)
-            else:
-                ok_contours.append(cnt)
-
-        filled = edges_canny_8 // 2
-        cv2.drawContours(filled, ok_contours, -1, 64, cv2.FILLED, cv2.LINE_4)
-        cv2.drawContours(filled, good_contours, -1, 255, cv2.FILLED, cv2.LINE_4)
+        # Suppress all edges that are not lo-hi-lo.
+        filled = non_line_suppression(inp, edges_canny_8)
 
         # Carry the current state on to the next time stamp
         self._previous_grays_fast = temporally_smoothed_fast

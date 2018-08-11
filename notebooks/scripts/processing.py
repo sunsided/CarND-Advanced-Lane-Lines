@@ -32,7 +32,7 @@ def build_roi_mask() -> np.ndarray:
         [70, h], [0, 630]
     ]
     roi_mask = np.zeros(shape=(h, w), dtype=np.uint8)
-    return cv2.fillPoly(roi_mask, [np.array(roi)], True, 255)
+    return cv2.fillPoly(roi_mask, [np.array(roi)], 255, cv2.LINE_4)
 
 
 def luminance_constancy_lab(lab: np.ndarray, kernel_size: int=127) -> np.ndarray:

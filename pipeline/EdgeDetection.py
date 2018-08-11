@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
-from typing import Tuple, Optional
+from typing import Optional
+from .swt import swt_process_pixel
+from .non_line_suppression import non_line_suppression
 
 
 class EdgeDetection:
@@ -26,6 +28,7 @@ class EdgeDetection:
         self.canny_lo = 64
         self.canny_hi = 180
         self.filter_threshold = .08
+        self._stroke_filter = False
         self._kernel = self._build_kernel(self._kernel_width, self._kernel_pad)
 
     def filter(self, img: np.ndarray, is_lab: bool=False) -> np.ndarray:
@@ -49,7 +52,7 @@ class EdgeDetection:
             filtered *= self._roi_mask
         return filtered
 
-    def detect(self, img: np.ndarray, is_lab: bool=False) -> Tuple[np.ndarray, np.ndarray]:
+    def detect(self, img: np.ndarray, is_lab: bool=False) -> np.ndarray:
         """
         Processes the specified image.
         :param img: The image to obtain masks from.
@@ -61,6 +64,26 @@ class EdgeDetection:
 
         # Detect edges
         edges = cv2.Canny(np.uint8(filtered * 255), self.canny_lo, self.canny_hi)
+
+        # Obtain the gradients for filtering.
+        # We only require local gradients, so obtaining them only when required would make sense.
+        dx = cv2.Scharr(filtered, cv2.CV_32F, 1, 0)
+        dy = cv2.Scharr(filtered, cv2.CV_32F, 0, 1)
+
+        # Now the stroke width transform already detects lo-hi-lo edges for us, but it is an extremely slow
+        # implementation I did.
+        if self._stroke_filter:
+            gradients = (dx, dy)
+            for y in range(0, edges.shape[0]):
+                for x in range(0, edges.shape[1]):
+                    if edges[y, x] == 0:
+                        continue
+                    ray = swt_process_pixel((x, y), edges, gradients, min_length=5, max_length=20)
+                    if ray is None:
+                        edges[y, x] = 0
+        else:
+            edges = non_line_suppression(filtered, edges, dx, dy)
+
         if self._morphological_filtering:
             edges = cv2.morphologyEx(edges, cv2.MORPH_BLACKHAT, np.ones(shape=(5, 5)))
             edges = cv2.medianBlur(edges, 3)
@@ -69,6 +92,8 @@ class EdgeDetection:
             lines = cv2.HoughLinesP(edges, 1, np.pi / 90, self.hough_line_support,
                                     minLineLength=self.hough_line_length, maxLineGap=self.hough_line_gap)
             edge_lines = np.zeros_like(edges)
+            if lines is None:
+                return edge_lines
             for line in lines:
                 x1, y1, x2, y2 = line[0]
                 cv2.line(edge_lines, (x1, y1), (x2, y2), 255, 2)

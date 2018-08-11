@@ -15,15 +15,28 @@ from pipeline import EdgeDetectionTemporal, EdgeDetection, LaneColorMasking
 
 def get_mask(frame: np.ndarray, edg: EdgeDetection, tmp: EdgeDetectionTemporal, lcm: LaneColorMasking) -> np.ndarray:
     lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-    mask_l, mask_b = lcm.process(lab, is_lab=True)
-    edges_static = edg.filter(lab, is_lab=True)
-    edges_temporal = tmp.filter(lab, is_lab=True)
-    mask_sum = edges_static
-    mask_sum + edges_temporal
-    mask_sum += np.float32(mask_l) / 255.
-    mask_sum += np.float32(mask_b) / 255.
-    scaled = (mask_sum / 4) ** 2
-    return scaled / scaled.max()
+    sum_ = 0
+
+    mask_sum = np.ones(lab.shape[:2], np.float32)
+    if lcm is not None:
+        sum_ += 2
+        mask_l, mask_b = lcm.process(lab, is_lab=True)
+        mask_sum += np.float32(mask_l) / 255. / 4
+        mask_sum += np.float32(mask_b) / 255. / 4
+
+    if edg is not None:
+        sum_ += 1
+        edges_static = edg.detect(lab, is_lab=True).astype(np.float32) / 255.
+        mask_sum += edges_static
+
+    if tmp is not None:
+        sum_ += 1
+        edges_temporal = tmp.filter(lab, is_lab=True)
+        mask_sum += edges_temporal
+
+    scaled = (mask_sum / sum_) ** 2
+    scaled = (scaled - scaled.min()) / (scaled.max() - scaled.min())
+    return scaled
 
 
 def build_histogram(window: np.ndarray, binwidth: int=20, binstep: int=20) -> Tuple[np.ndarray, np.ndarray]:
@@ -53,10 +66,11 @@ def find_maxima(histogram: np.ndarray, bins: np.ndarray, epsilon: float = .0, k:
         maxima.append(bins[-1])
         heights.append(histogram[-1])
 
-    if k > 0:
-        idxs = np.array(heights).argsort()[-k:][::-1]
-        maxima = np.array(maxima)[idxs].tolist()
-        heights = np.array(heights)[idxs].tolist()
+    if k == 0:
+        k = len(heights)
+    idxs = np.array(heights).argsort()[-k:][::-1]
+    maxima = np.array(maxima)[idxs].tolist()
+    heights = np.array(heights)[idxs].tolist()
     return maxima, heights
 
 
@@ -78,9 +92,11 @@ def get_window(mask: np.ndarray, seed_x: int, seed_y: int, box_width: int = 50, 
 def search_track(mask: np.ndarray, seed_x: int, seed_y: int,
                  box_width: int = 50, box_height: int = 50, threshold: float = 20,
                  fit_weight: float = 1., centroid_weight: float = 1.,
-                 n_smooth: int=10):
+                 n_smooth: int=5, max_strikes=4, max_height: float=0):
     rects, xs, ys = [], [], []
     h, w = mask.shape[:2]
+    max_height = h - h * max_height
+    strikes = 0
     while True:
         window, rect = get_window(mask, seed_x, seed_y, box_width, box_height)
 
@@ -89,9 +105,8 @@ def search_track(mask: np.ndarray, seed_x: int, seed_y: int,
         total = col_sums.sum()
         valid = total > threshold
         if valid:
+            strikes = 0
             rects.append(rect)
-            xs.append(seed_x)
-            ys.append(seed_y)
             # Propose a new search location by fitting a curve over the last N search
             # windows. The idea is that the streets always follow a clothoidal track,
             # so sharp deviations from that are unlikely. Thus, a local curve fit
@@ -99,6 +114,11 @@ def search_track(mask: np.ndarray, seed_x: int, seed_y: int,
             # local model of the curvature of the street.
             indexes = np.arange(0, col_sums.shape[0])
             seed_x = rect[0] + np.int32(np.average(indexes, weights=col_sums))
+
+            # Now for the regression, we are actually using the corrected location rather than
+            # the previous estimate.
+            xs.append(seed_x)
+            ys.append(seed_y)
 
             # For a curve of degree two, we need at least three samples.
             if len(rects) > 3:
@@ -110,6 +130,16 @@ def search_track(mask: np.ndarray, seed_x: int, seed_y: int,
                 sy = rect[1]
                 sseed_x = sfit[0] * sy ** 2 + sfit[1] * sy + sfit[2]
                 seed_x = int((fit_weight * sseed_x + centroid_weight * seed_x) / (fit_weight + centroid_weight))
+        else:
+            strikes += 1
+
+        # Apply the search limit.
+        if max_height > 0 and seed_y < max_height:
+            break
+
+        # Don't attempt to find a line forever.
+        if strikes == max_strikes:
+            break
 
         # Stop if we leave the window
         if rect[0] < 0 or rect[0] >= w or rect[1] < -box_height:
@@ -137,20 +167,44 @@ def regress_lanes(mask: np.ndarray, k: int = 2,
                   box_width: int = 75, box_height: int = 40, threshold: int = 20,
                   degree: int = 2, search_height: int = 4,
                   fit_weight: float = 1., centroid_weight: float = 1.,
-                  n_smooth: int=10):
+                  n_smooth: int=10, max_strikes=4, max_height: float=0):
     h, w = mask.shape[:2]
     window = mask[-h // search_height:, ...]
     hist, bins = build_histogram(window, 2, 1)
-    maxima, values = find_maxima(hist, bins, k=k)
+    maxima, values = find_maxima(hist, bins, k=len(bins))
+    if len(maxima) == 0:
+        return [], []
+
+    # We now ensure to actually select distinct starting points by
+    # suppressing all maxima that are within a window of the previous best one.
+    good_maxima = [maxima[0]]
+    good_values = [values[0]]
+    for i in range(1, len(maxima)):
+        mi = maxima[i]
+        selected = True
+        for j in range(0, len(good_maxima)):
+            mj = maxima[j]
+            if abs(mj - mi) < box_width:
+                selected = False
+                break
+        if not selected:
+            continue
+        good_maxima.append(maxima[i])
+        good_values.append(values[i])
+        # Early exit if we have found all requested maxima.
+        if len(good_maxima) == k:
+            break
 
     fits, rects = [], []
-    for m in maxima:
+    for m in good_maxima:
         track, xs, ys = search_track(mask, m, h - 1,
                                      box_width=box_width,
                                      box_height=box_height,
                                      threshold=threshold,
                                      fit_weight=fit_weight, centroid_weight=centroid_weight,
-                                     n_smooth=n_smooth)
+                                     n_smooth=n_smooth,
+                                     max_strikes=max_strikes,
+                                     max_height=max_height)
         if len(xs) == 0:
             continue
         fits.append(np.polyfit(ys, xs, deg=degree))
@@ -222,13 +276,13 @@ def main(args):
     roi_mask = build_roi_mask()
     roi_mask_f = np.float32(roi_mask) / 255.
 
-    edg = EdgeDetection(detect_lines=True, mask=roi_mask)
-    edt = EdgeDetectionTemporal(mask=roi_mask)
+    edg = EdgeDetection(detect_lines=False, mask=roi_mask_f)
+    edt = EdgeDetectionTemporal(mask=roi_mask_f)
 
-    lcm = LaneColorMasking()
-    lcm.detect_lines = False
+    lcm = LaneColorMasking(luminance_kernel_width=0)
+    lcm.detect_lines = True
     lcm.blue_threshold = 25
-    lcm.light_cutoff = .9
+    lcm.light_cutoff = .99
 
     while True:
         t_start = datetime.now()
@@ -239,19 +293,15 @@ def main(args):
         img, _ = cc.undistort(img, False)
         warped = bev.warp(img)
 
-        #edg.detect_lines = True
-        #edges_static = edg.detect(warped, is_lab=False)
-        #edges_temporal = edt.filter(warped, is_lab=False)
-        #edges = edges_static * edges_temporal
-        #img = np.hstack([np.float32(warped) / 255., cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)])
-        #cv2.imshow('edges', img)
-        #cv2.waitKey(33)
-        #continue
-
         edges = get_mask(warped, edg, edt, lcm) * roi_mask_f
         canvas = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
-        fits, rects = regress_lanes(edges, k=2, search_height=5, box_width=50, box_height=30, threshold=5,
-                                    fit_weight=1, centroid_weight=1, n_smooth=20)
+        #fits, rects = regress_lanes(edges, k=2, search_height=5, box_width=50, box_height=30, threshold=5,
+        fits, rects = regress_lanes(edges,
+                                    k=2, degree=2,
+                                    search_height=10,
+                                    max_height=0.55,
+                                    box_width=50, box_height=20, threshold=5,
+                                    fit_weight=2, centroid_weight=1, n_smooth=20)
         render_lanes(canvas, fits, rects)
 
         #img = cv2.resize(img, (0, 0), fx=display_scale, fy=display_scale)

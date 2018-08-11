@@ -94,8 +94,8 @@ def apply_swt(im: Image, edges: Image, gradients: Gradients, min_length: float=0
             # Suppress tiny edges
             if norms[y, x] < norm_thresh_sq:
                 continue
-            ray = _swt_process_pixel(Position(x=x, y=y), edges, directions, out=swt,
-                                     min_length=min_length, max_length=max_length)
+            ray = swt_process_pixel(Position(x=x, y=y), edges, directions, out=swt,
+                                    min_length=min_length, max_length=max_length)
             if ray:
                 rays.append(ray)
 
@@ -109,8 +109,8 @@ def apply_swt(im: Image, edges: Image, gradients: Gradients, min_length: float=0
     return swt
 
 
-def _swt_process_pixel(pos: Position, edges: Image, directions: Gradients, out: Image,
-                       min_length: float, max_length: float) -> Optional[Ray]:
+def swt_process_pixel(pos: Position, edges: Image, directions: Gradients, out: Optional[Image] = None,
+                       min_length: float=0, max_length: float=float('inf')) -> Optional[Ray]:
     """
     Obtains the stroke width starting from the specified position.
     :param pos: The starting point
@@ -120,6 +120,11 @@ def _swt_process_pixel(pos: Position, edges: Image, directions: Gradients, out: 
     :param min_length: The minimum length required for a stroke.
     :param max_length: The maximum length allowed for a stroke.
     """
+    if isinstance(pos, tuple):
+        pos = Position(x=pos[0], y=pos[1])
+    if isinstance(directions, tuple):
+        directions = Gradients(x=directions[0], y=directions[1])
+
     # Keep track of the image dimensions for boundary tests.
     height, width = edges.shape[0:2]
 
@@ -133,13 +138,20 @@ def _swt_process_pixel(pos: Position, edges: Image, directions: Gradients, out: 
     ray = [pos]
 
     # Obtain the direction to step into
-    dir_x = directions.x[pos.y, pos.x]
-    dir_y = directions.y[pos.y, pos.x]
+    input_dir_x = directions.x[pos.y, pos.x]
+    input_dir_y = directions.y[pos.y, pos.x]
+    if input_dir_x == 0 and input_dir_y == 0:
+        return None
+
+    # Normalize the directions
+    inv_norm = 1. / np.sqrt(input_dir_x ** 2 + input_dir_y ** 2)
+    dir_x = input_dir_x * inv_norm
+    dir_y = input_dir_y * inv_norm
 
     # Since some pixels have no gradient, normalization of the gradient
     # is a division by zero for them, resulting in NaN. These values
     # should not bother us since we explicitly tested for an edge before.
-    assert not (np.isnan(dir_x) or np.isnan(dir_y))
+    assert not (np.isnan(dir_x) or np.isnan(dir_y)), 'dx: {}, dy: {}, 1/norm: {}'.format(input_dir_x, input_dir_y, inv_norm)
 
     # Traverse the pixels along the direction.
     prev_pos = Position(x=-1, y=-1)
@@ -184,8 +196,9 @@ def _swt_process_pixel(pos: Position, edges: Image, directions: Gradients, out: 
         # In regular SWT, we would set this pixel to the currently longest stroke.
         # Since we don't really care for stroke widths later, we just add up
         # the number of times a stroke crossed this pixel.
-        for p in ray:
-            out[p.y, p.x] += 1
+        if out is not None:
+            for p in ray:
+                out[p.y, p.x] += 1
         return ray
 
     # noinspection PyUnreachableCode
