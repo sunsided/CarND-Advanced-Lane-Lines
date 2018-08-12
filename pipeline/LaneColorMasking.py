@@ -52,13 +52,17 @@ class LaneColorMasking:
         :return: A tuple consisting of the white and yellow lane mask.
         """
         li = self._luminance_constancy_lab(lab[..., 0])
-        li = cv2.equalizeHist(li)
-        b = cv2.equalizeHist(lab[..., 2])
+        if self._lc_kernel_size > 0:
+            li = cv2.equalizeHist(li)
+        b = lab[..., 2]
+        if self._lc_kernel_size > 0:
+            b = cv2.equalizeHist(b)
 
-        l_mask = np.zeros(shape=lab.shape[:2], dtype=np.uint8)
+        l_mask = np.zeros(shape=li.shape[:2], dtype=np.uint8)
         l_mask[li >= self.light_cutoff * li.max()] = 255
         b_mask = np.zeros_like(l_mask)
-        b_mask[b <= self.blue_threshold] = 255
+        b_mask[b >= self.blue_threshold] = 255
+
         return l_mask, b_mask
 
     def _luminance_constancy_lab(self, channel: np.ndarray) -> np.ndarray:

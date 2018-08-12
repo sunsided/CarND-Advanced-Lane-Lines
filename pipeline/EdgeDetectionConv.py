@@ -5,7 +5,7 @@ from .swt import swt_process_pixel
 from .non_line_suppression import non_line_suppression
 
 
-class EdgeDetection:
+class EdgeDetectionConf:
     """
     Obtains edges for for further processing.
     """
@@ -27,7 +27,7 @@ class EdgeDetection:
         self.hough_line_gap = 5
         self.canny_lo = 64
         self.canny_hi = 180
-        self.filter_threshold = .08
+        self.filter_threshold = .03
         self._stroke_filter = False
         self._kernel = self._build_kernel(self._kernel_width, self._kernel_pad)
 

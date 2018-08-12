@@ -1,6 +1,8 @@
 from .CameraCalibration import CameraCalibration
 from .BirdsEyeView import ImageSection, BirdsEyeView, Point
 from .LaneColorMasking import LaneColorMasking
-from .EdgeDetection import EdgeDetection
+from .EdgeDetectionNaive import EdgeDetectionNaive
+from .EdgeDetectionConv import EdgeDetectionConf
 from .EdgeDetectionSWT import EdgeDetectionSWT
 from .EdgeDetectionTemporal import EdgeDetectionTemporal
+from .non_line_suppression import non_line_suppression
