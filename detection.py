@@ -265,7 +265,7 @@ def regress_lanes(mask: np.ndarray, k: int = 2,
     return tracks
 
 
-def blend_fits(tracks: List[Track]) -> Optional[Fit]:
+def blend_tracks(tracks: List[Track]) -> Optional[Fit]:
     assert len(tracks) > 0
 
     valid_tracks = [t for t in tracks if t.valid]
@@ -289,17 +289,9 @@ def blend_fits(tracks: List[Track]) -> Optional[Fit]:
     return tuple(np.sum(fits, axis=0) / norm)
 
 
-def filter_lane(img: np.ndarray, tracks: List[Track],
-                lo: float=.05, hi: float=.8, min_support: float=.1) -> Optional[Fit]:
-    assert tracks is not None
+def validate_fit(img: np.ndarray, fit: Fit, lo: float=.05, hi: float=.8, min_support: float=.1) -> bool:
+    assert fit is not None
     h, w = img.shape[:2]
-
-    # Interpolate the tracks based on their deviation of curvature from
-    # the consensus.
-    fit = blend_fits(tracks)
-    if fit is None:
-        # TODO: Start search from scratch!
-        return None
 
     # We now evaluate the interpolated track in order to check for support in the image.
     box_height = 16
@@ -318,11 +310,8 @@ def filter_lane(img: np.ndarray, tracks: List[Track],
         support = np.sum(window) / np.prod(window.shape)
         supported.append(1. if lo < support < hi else 0)
 
-    support = np.mean(supported)
-    if support < min_support:
-        return None
-
-    return fit
+    support = float(np.mean(supported))
+    return support >= min_support
 
 
 def render_lane(canvas: np.ndarray, fit: Fit, highest_rect: Optional[float]=None) -> np.ndarray:
@@ -364,11 +353,13 @@ def detect_and_render_lane(canvas: np.ndarray, edges: np.ndarray, state: LaneDet
         if render_boxes:
             render_rects(canvas, track.rects, 1)
 
-    fit = filter_lane(edges, tracks)
+    # Interpolate the tracks based on their deviation of curvature from the consensus.
+    # Validate the interpolated fit against support in the image. If none is found, discard.
+    fit = blend_tracks(tracks)
     if fit is None:
         return False, canvas
-
-    state.set_left(LaneFit(fit=fit, age=0))
+    if not validate_fit(edges, fit):
+        return False, canvas
     canvas = render_lane(canvas, fit, highest_rect)
     return True, canvas
 
