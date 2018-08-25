@@ -13,10 +13,11 @@ from pipeline import CameraCalibration, BirdsEyeView, ImageSection, Point
 from pipeline import EdgeDetectionNaive, EdgeDetectionTemporal, EdgeDetectionConf, EdgeDetectionSWT
 from pipeline import LaneColorMasking
 
+Fit = Tuple[np.ndarray, Any, np.ndarray]
 
 Track = NamedTuple('Track', [('side', int), ('valid', bool),
                              ('curvature_radius', float),
-                             ('fit', Tuple[np.ndarray, Any, np.ndarray]),
+                             ('fit', Fit),
                              ('rects', list)])
 
 InvalidLeftTrack = Track(side=-1, valid=False, curvature_radius=float('inf'),
@@ -180,6 +181,12 @@ def search_track(mask: np.ndarray, seed_x: int, seed_y: int,
     return rects, xs, ys
 
 
+def curvature_radius(fit, y: float, mx: float) -> float:
+    coeff_a, coeff_b, coeff_c = fit
+    radius = ((1. + (2. * coeff_a * y + coeff_b) ** 2.) ** 1.5) / np.abs(2. * coeff_a)
+    return radius * mx
+
+
 def regress_lanes(mask: np.ndarray, k: int = 2,
                   box_width: int = 75, box_height: int = 40, threshold: Optional[int] = None,
                   degree: int = 2, search_height: int = 4,
@@ -263,18 +270,12 @@ def regress_lanes(mask: np.ndarray, k: int = 2,
 
         # Measure the curvature_radius close to the vehicle (at the bottom of the image)
         y_eval = np.max(ys)
-        coeff_a, coeff_b, coeff_c = fit
-        curvature_radius = ((1. + (2. * coeff_a * y_eval + coeff_b) ** 2.) ** 1.5) / np.abs(2. * coeff_a)
-        curvature_radius *= mx
-
-        t = Track(side=side, fit=fit, rects=track, curvature_radius=curvature_radius, valid=True)
-        if side > 0:
-            print(curvature_radius)
-        tracks.append(t)
+        cr = curvature_radius(fit, y_eval, mx)
+        tracks.append(Track(side=side, fit=fit, rects=track, curvature_radius=cr, valid=True))
     return tracks
 
 
-def blend_fits(tracks: List[Track]) -> Optional[Tuple[np.ndarray, Any, np.ndarray]]:
+def blend_fits(tracks: List[Track]) -> Optional[Fit]:
     assert len(tracks) > 0
 
     valid_tracks = [t for t in tracks if t.valid]
@@ -285,7 +286,7 @@ def blend_fits(tracks: List[Track]) -> Optional[Tuple[np.ndarray, Any, np.ndarra
     sqe = np.array([(1 - t.curvature_radius / curvature) ** 2 for t in valid_tracks])
     error_coeffs = np.exp(-sqe)
     mask = np.ones_like(error_coeffs)
-    mask[error_coeffs < 0.7] = 0
+    mask[error_coeffs < 0.6] = 0
     if np.sum(mask) == 0:
         return None
     norm = np.sum(error_coeffs * mask)
@@ -295,6 +296,26 @@ def blend_fits(tracks: List[Track]) -> Optional[Tuple[np.ndarray, Any, np.ndarra
         fits[i] *= error_coeffs[i] * mask[i]
 
     return tuple(np.sum(fits, axis=0) / norm)
+
+
+def filter_lane(img: np.ndarray, tracks: List[Track],
+                thresh: int = 50) -> Optional[Fit]:
+    assert tracks is not None
+    h, w = img.shape[:2]
+
+    # Interpolate the tracks based on their deviation of curvature from
+    # the consensus.
+    fit = blend_fits(tracks)
+    if fit is None:
+        # TODO: Start search from scratch!
+        return None
+
+    # We now evaluate the interpolated track in order to check for support in the image.
+    top_y = h // 2
+    ys = np.linspace(h - 1, top_y, h - top_y)
+    xs = np.polyval(fit, ys)
+
+    return fit
 
 
 def render_lane(img: np.ndarray, tracks: List[Track],
@@ -320,19 +341,13 @@ def render_lane(img: np.ndarray, tracks: List[Track],
         for rect in track.rects:
             cv2.rectangle(img, rect[:2], rect[2:], color=(0, 0, 1), thickness=1)
 
-    # Select the topmost position for lane line extrapolation.
-    top_y = min(h // 2, highest_rect)
-    ys = np.linspace(h - 1, top_y, h - top_y)
-
-    # For the polylines, we add filtering across previous detections.
-    if filter:
-        fit = blend_fits(tracks)
-        if fit is None:
-            # TODO: Start search from scratch!
-            return img
-        xs = np.polyval(fit, ys)
-    elif not track.valid:
+    fit = filter_lane(img, tracks, thresh)
+    if fit is None:
         return img
+
+    highest_rect = min(h // 2, highest_rect)
+    ys = np.linspace(h - 1, highest_rect, h - highest_rect)
+    xs = np.polyval(fit, ys)
 
     # noinspection PyUnboundLocalVariable
     pts = np.int32([(x, y) for (x, y) in zip(xs, ys)])
@@ -410,7 +425,7 @@ def main(args):
         ret, img = cap.read()
         if not ret:
             break
-        print('Processing frame {} ...'.format(cap.get(cv2.CAP_PROP_POS_FRAMES)))
+        print('Processing frame {} ...'.format(int(cap.get(cv2.CAP_PROP_POS_FRAMES))))
 
         img, _ = cc.undistort(img, False)
         warped = bev.warp(img)
