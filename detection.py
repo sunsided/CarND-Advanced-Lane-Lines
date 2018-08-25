@@ -7,29 +7,12 @@ import os
 import cv2
 import numpy as np
 from datetime import datetime
-from typing import Tuple, List, Union, Optional, NamedTuple, Any
+from typing import Tuple, List, Union, Optional
 
 from pipeline import CameraCalibration, BirdsEyeView, ImageSection, Point
 from pipeline import EdgeDetectionNaive, EdgeDetectionTemporal, EdgeDetectionConf, EdgeDetectionSWT
 from pipeline import LaneColorMasking
-
-Fit = Tuple[np.ndarray, Any, np.ndarray]
-
-Track = NamedTuple('Track', [('side', int), ('valid', bool),
-                             ('curvature_radius', float),
-                             ('confidence', float),
-                             ('fit', Fit),
-                             ('rects', list)])
-
-InvalidLeftTrack = Track(side=-1, valid=False, curvature_radius=float('inf'),
-                         confidence=0,
-                         fit=tuple(np.zeros((3,), np.float32)),
-                         rects=[])
-
-InvalidRightTrack = Track(side=1, valid=False, curvature_radius=float('inf'),
-                          confidence=0,
-                          fit=tuple(np.zeros((3, ), np.float32)),
-                          rects=[])
+from pipeline import LaneDetectionState, LaneFit, Fit, Track
 
 
 def get_mask(frame: np.ndarray, edg: Optional[Union[EdgeDetectionConf, EdgeDetectionNaive]],
@@ -307,7 +290,7 @@ def blend_fits(tracks: List[Track]) -> Optional[Fit]:
 
 
 def filter_lane(img: np.ndarray, tracks: List[Track],
-                lo: float=.05, hi: float=.8) -> Optional[Fit]:
+                lo: float=.05, hi: float=.8, min_support: float=.1) -> Optional[Fit]:
     assert tracks is not None
     h, w = img.shape[:2]
 
@@ -332,19 +315,36 @@ def filter_lane(img: np.ndarray, tracks: List[Track],
         yb = int(yb)
         yt = int(max(0, yb - box_height))
         window = img[yt:yb, xl:xr]
-        support = np.sum(window) / np.prod(window.shape[:2])
+        support = np.sum(window) / np.prod(window.shape)
         supported.append(1. if lo < support < hi else 0)
 
-    if np.mean(supported) < .5:
+    support = np.mean(supported)
+    if support < min_support:
         return None
 
     return fit
 
 
-def render_lane(img: np.ndarray, canvas: np.ndarray, tracks: List[Track],
-                offset_thresh: int, confidence_thresh: float) -> np.ndarray:
+def render_lane(canvas: np.ndarray, fit: Fit, highest_rect: Optional[float]=None) -> np.ndarray:
+    h, w = canvas.shape[:2]
+    highest_rect = min(h // 2, highest_rect) if highest_rect is not None else h // 2
+    ys = np.linspace(h - 1, highest_rect, h - highest_rect)
+    xs = np.polyval(fit, ys)
+    pts = np.int32([(x, y) for (x, y) in zip(xs, ys)])
+    cv2.polylines(canvas, [pts], False, color=(1, 0.5, 0.1), thickness=4, lineType=cv2.LINE_AA)
+    return canvas
+
+
+def render_rects(canvas: np.ndarray, rects: List[Tuple[int, int, int, int]], alpha: float) -> np.ndarray:
+    for rect in rects:
+        cv2.rectangle(canvas, rect[:2], rect[2:], color=(0, 0, alpha), thickness=1)
+    return canvas
+
+
+def detect_and_render_lane(canvas: np.ndarray, edges: np.ndarray, state: LaneDetectionState, tracks: List[Track],
+                           offset_thresh: int, confidence_thresh: float, render_boxes: bool=True) -> Tuple[bool, np.ndarray]:
     assert tracks is not None
-    h, w = img.shape[:2]
+    h, w = edges.shape[:2]
 
     # We pick the latest track for rendering the rectangles.
     track = tracks[-1]
@@ -358,34 +358,27 @@ def render_lane(img: np.ndarray, canvas: np.ndarray, tracks: List[Track],
         ys = np.linspace(h - 1, highest_rect, h - highest_rect)
         xs = np.polyval(track.fit, ys)
         if xs[0] < offset_thresh or xs[0] > (w - offset_thresh) or track.confidence < confidence_thresh:
-            for rect in track.rects:
-                cv2.rectangle(canvas, rect[:2], rect[2:], color=(0, 0, .25), thickness=1)
-            return canvas
-        for rect in track.rects:
-            cv2.rectangle(canvas, rect[:2], rect[2:], color=(0, 0, 1), thickness=1)
+            if render_boxes:
+                render_rects(canvas, track.rects, 0.25)
+            return False, canvas
+        if render_boxes:
+            render_rects(canvas, track.rects, 1)
 
-    fit = filter_lane(img, tracks)
+    fit = filter_lane(edges, tracks)
     if fit is None:
-        return canvas
+        return False, canvas
 
-    highest_rect = min(h // 2, highest_rect)
-    ys = np.linspace(h - 1, highest_rect, h - highest_rect)
-    xs = np.polyval(fit, ys)
-
-    # noinspection PyUnboundLocalVariable
-    pts = np.int32([(x, y) for (x, y) in zip(xs, ys)])
-    cv2.polylines(canvas, [pts], False, color=(0, 1, 1), thickness=2, lineType=cv2.LINE_AA)
-    return canvas
+    state.set_left(LaneFit(fit=fit, age=0))
+    canvas = render_lane(canvas, fit, highest_rect)
+    return True, canvas
 
 
-def render_lanes(img: np.ndarray, left_tracks: List[Track], right_tracks: List[Track],
-                 left_thresh: int = 50, right_thresh: int = 50, confidence_thresh: float=.3) -> np.ndarray:
-    assert left_tracks is not None
-    assert right_tracks is not None
-    canvas = img.copy()
-    render_lane(img, canvas, left_tracks, left_thresh, confidence_thresh)
-    render_lane(img, canvas, right_tracks, right_thresh, confidence_thresh)
-    return canvas
+def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetectionState,
+                            left_thresh: int = 50, right_thresh: int = 50, confidence_thresh: float=.3) \
+        -> Tuple[Tuple[bool, bool], np.ndarray]:
+    left_match, canvas = detect_and_render_lane(img, edges, state, state.tracks_left, left_thresh, confidence_thresh)
+    right_match, canvas = detect_and_render_lane(img, edges, state, state.tracks_right, right_thresh, confidence_thresh)
+    return (left_match, right_match), canvas
 
 
 def main(args):
@@ -407,6 +400,8 @@ def main(args):
         bottom_right=Point(x=1013, y=660),
         bottom_left=Point(x=290, y=660),
     )
+
+    state = LaneDetectionState()
 
     def build_roi_mask(pad: int = 0) -> np.ndarray:
         h, w = 760, 300  # warped.shape[:2]
@@ -441,9 +436,6 @@ def main(args):
     lcm.blue_threshold = 250
     lcm.light_cutoff = .95
 
-    tracks_left = []
-    tracks_right = []
-
     while True:
         t_start = datetime.now()
         ret, img = cap.read()
@@ -465,10 +457,9 @@ def main(args):
         warped_f = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
         warped = np.uint8(warped_f * 255)
 
-        cv2.imshow('warped_f', warped_f)
-
         edges = get_mask(warped, edg, swt, lcm) * roi_mask_hard
-        canvas = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
+        canvas = warped_f.copy()
+
         tracks = regress_lanes(edges,
                                k=2, degree=2,
                                search_height=10,
@@ -478,20 +469,11 @@ def main(args):
                                fit_weight=2, centroid_weight=1, n_smooth=10,
                                mx=mx, my=my)
 
-        detection_left = [t for t in tracks if t.side < 0]
-        detection_right = [t for t in tracks if t.side > 0]
-
-        tracks_left.append(detection_left[0] if len(detection_left) > 0 else InvalidLeftTrack)
-        tracks_right.append(detection_right[0] if len(detection_right) > 0 else InvalidRightTrack)
-
-        max_history = 10
-        if len(tracks_left) > max_history:
-            tracks_left.pop(0)
-        if len(tracks_right) > max_history:
-            tracks_right.pop(0)
-        canvas = render_lanes(canvas, tracks_left, tracks_right, filter=True)
+        state.update(tracks)
+        matches, canvas = detect_and_render_lanes(canvas, edges, state)
 
         # img = cv2.resize(img, (0, 0), fx=display_scale, fy=display_scale)
+        cv2.imshow('edges', edges)
         cv2.imshow('video', canvas)
 
         # Attempt to stay close to the original FPS.
