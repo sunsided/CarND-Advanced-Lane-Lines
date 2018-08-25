@@ -251,25 +251,34 @@ def regress_lanes(mask: np.ndarray, k: int = 2,
     return tracks
 
 
-def render_lanes(img: np.ndarray, tracks: List[Track], left_thresh: int = 50, right_thresh: int = 50) -> np.ndarray:
-    assert tracks is not None
+def render_lane(img: np.ndarray, track: Track,
+                thresh: int = 50) -> np.ndarray:
+    assert track is not None
     h, w = img.shape[:2]
 
-    for track in tracks:
-        top_y = track.rects[-1][1]
-        ys = np.linspace(h - 1, top_y, h - top_y)
-        xs = np.polyval(track.fit, ys)
-        if xs[0] < left_thresh or xs[0] > (w - right_thresh):
-            for rect in track.rects:
-                cv2.rectangle(img, rect[:2], rect[2:], color=(0, 0, .25), thickness=1)
-            continue
-
+    top_y = track.rects[-1][1]
+    ys = np.linspace(h - 1, top_y, h - top_y)
+    xs = np.polyval(track.fit, ys)
+    if xs[0] < thresh or xs[0] > (w - thresh):
         for rect in track.rects:
-            cv2.rectangle(img, rect[:2], rect[2:], color=(0, 0, 1), thickness=1)
+            cv2.rectangle(img, rect[:2], rect[2:], color=(0, 0, .25), thickness=1)
+        return img
 
-        pts = np.int32([(x, y) for (x, y) in zip(xs, ys)])
-        cv2.polylines(img, [pts], False, color=(0, 1, 1), thickness=2, lineType=cv2.LINE_AA)
+    for rect in track.rects:
+        cv2.rectangle(img, rect[:2], rect[2:], color=(0, 0, 1), thickness=1)
 
+    pts = np.int32([(x, y) for (x, y) in zip(xs, ys)])
+    cv2.polylines(img, [pts], False, color=(0, 1, 1), thickness=2, lineType=cv2.LINE_AA)
+
+    return img
+
+
+def render_lanes(img: np.ndarray, left_tracks: List[Track], right_tracks: List[Track],
+                 left_thresh: int = 50, right_thresh: int = 50) -> np.ndarray:
+    assert left_tracks is not None
+    assert right_tracks is not None
+    render_lane(img, left_tracks[-1], left_thresh)
+    render_lane(img, right_tracks[-1], right_thresh)
     return img
 
 
@@ -323,6 +332,9 @@ def main(args):
     lcm.blue_threshold = 250
     lcm.light_cutoff = .95
 
+    tracks_left = []
+    tracks_right = []
+
     while True:
         t_start = datetime.now()
         ret, img = cap.read()
@@ -354,7 +366,11 @@ def main(args):
                                max_strikes=15,
                                box_width=30, box_height=10, threshold=5,
                                fit_weight=2, centroid_weight=1, n_smooth=10)
-        render_lanes(canvas, tracks)
+
+        tracks_left.append([t for t in tracks if t.side < 0][0])
+        tracks_right.append([t for t in tracks if t.side > 0][0])
+
+        render_lanes(canvas, tracks_left, tracks_right)
 
         # img = cv2.resize(img, (0, 0), fx=display_scale, fy=display_scale)
         cv2.imshow('video', canvas)
