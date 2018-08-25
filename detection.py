@@ -17,14 +17,17 @@ Fit = Tuple[np.ndarray, Any, np.ndarray]
 
 Track = NamedTuple('Track', [('side', int), ('valid', bool),
                              ('curvature_radius', float),
+                             ('confidence', float),
                              ('fit', Fit),
                              ('rects', list)])
 
 InvalidLeftTrack = Track(side=-1, valid=False, curvature_radius=float('inf'),
+                         confidence=0,
                          fit=tuple(np.zeros((3,), np.float32)),
                          rects=[])
 
 InvalidRightTrack = Track(side=1, valid=False, curvature_radius=float('inf'),
+                          confidence=0,
                           fit=tuple(np.zeros((3, ), np.float32)),
                           rects=[])
 
@@ -252,7 +255,7 @@ def regress_lanes(mask: np.ndarray, k: int = 2,
 
     tracks = []
     for m in good_maxima:
-        track, xs, ys = search_track(mask, m, h - 1,
+        rects, xs, ys = search_track(mask, m, h - 1,
                                      box_width=box_width,
                                      box_height=box_height,
                                      threshold=threshold,
@@ -268,10 +271,14 @@ def regress_lanes(mask: np.ndarray, k: int = 2,
             continue
         fit = np.polyfit(ys, xs, deg=degree)
 
+        xs_ = np.polyval(fit, ys)
+        rmse = np.sqrt(np.mean(np.array((xs - xs_) ** 2)))
+        confidence = max(0, 1 - np.exp(rmse - 5))
+
         # Measure the curvature_radius close to the vehicle (at the bottom of the image)
         y_eval = np.max(ys)
         cr = curvature_radius(fit, y_eval, mx)
-        tracks.append(Track(side=side, fit=fit, rects=track, curvature_radius=cr, valid=True))
+        tracks.append(Track(side=side, fit=fit, rects=rects, curvature_radius=cr, valid=True, confidence=confidence))
     return tracks
 
 
@@ -283,23 +290,24 @@ def blend_fits(tracks: List[Track]) -> Optional[Fit]:
         return None
 
     curvature = np.mean([t.curvature_radius for t in valid_tracks])
+    confidences = np.array([t.confidence for t in valid_tracks])
     sqe = np.array([(1 - t.curvature_radius / curvature) ** 2 for t in valid_tracks])
     error_coeffs = np.exp(-sqe)
     mask = np.ones_like(error_coeffs)
     mask[error_coeffs < 0.6] = 0
-    if np.sum(mask) == 0:
+    norm = np.sum(error_coeffs * mask * confidences)
+    if norm == 0:
         return None
-    norm = np.sum(error_coeffs * mask)
 
     fits = np.array([t.fit for t in valid_tracks])
     for i in range(len(fits)):
-        fits[i] *= error_coeffs[i] * mask[i]
+        fits[i] *= error_coeffs[i] * mask[i] * confidences[i]
 
     return tuple(np.sum(fits, axis=0) / norm)
 
 
 def filter_lane(img: np.ndarray, tracks: List[Track],
-                thresh: int = 50) -> Optional[Fit]:
+                lo: float=.05, hi: float=.8) -> Optional[Fit]:
     assert tracks is not None
     h, w = img.shape[:2]
 
@@ -311,15 +319,30 @@ def filter_lane(img: np.ndarray, tracks: List[Track],
         return None
 
     # We now evaluate the interpolated track in order to check for support in the image.
+    box_height = 16
+    box_hwidth = 30 // 2
     top_y = h // 2
-    ys = np.linspace(h - 1, top_y, h - top_y)
+    ys = np.linspace(h - 1, top_y, (h - top_y) / 16)
     xs = np.polyval(fit, ys)
+
+    supported = []
+    for yb, x in zip(ys, xs):
+        xl = int(max(0, x - box_hwidth))
+        xr = int(min(w - 1, x + box_hwidth))
+        yb = int(yb)
+        yt = int(max(0, yb - box_height))
+        window = img[yt:yb, xl:xr]
+        support = np.sum(window) / np.prod(window.shape[:2])
+        supported.append(1. if lo < support < hi else 0)
+
+    if np.mean(supported) < .5:
+        return None
 
     return fit
 
 
-def render_lane(img: np.ndarray, tracks: List[Track],
-                thresh: int = 50, filter: bool=True) -> np.ndarray:
+def render_lane(img: np.ndarray, canvas: np.ndarray, tracks: List[Track],
+                offset_thresh: int, confidence_thresh: float) -> np.ndarray:
     assert tracks is not None
     h, w = img.shape[:2]
 
@@ -334,16 +357,16 @@ def render_lane(img: np.ndarray, tracks: List[Track],
         highest_rect = track.rects[-1][1]
         ys = np.linspace(h - 1, highest_rect, h - highest_rect)
         xs = np.polyval(track.fit, ys)
-        if xs[0] < thresh or xs[0] > (w - thresh):
+        if xs[0] < offset_thresh or xs[0] > (w - offset_thresh) or track.confidence < confidence_thresh:
             for rect in track.rects:
-                cv2.rectangle(img, rect[:2], rect[2:], color=(0, 0, .25), thickness=1)
-            return img
+                cv2.rectangle(canvas, rect[:2], rect[2:], color=(0, 0, .25), thickness=1)
+            return canvas
         for rect in track.rects:
-            cv2.rectangle(img, rect[:2], rect[2:], color=(0, 0, 1), thickness=1)
+            cv2.rectangle(canvas, rect[:2], rect[2:], color=(0, 0, 1), thickness=1)
 
-    fit = filter_lane(img, tracks, thresh)
+    fit = filter_lane(img, tracks)
     if fit is None:
-        return img
+        return canvas
 
     highest_rect = min(h // 2, highest_rect)
     ys = np.linspace(h - 1, highest_rect, h - highest_rect)
@@ -351,17 +374,18 @@ def render_lane(img: np.ndarray, tracks: List[Track],
 
     # noinspection PyUnboundLocalVariable
     pts = np.int32([(x, y) for (x, y) in zip(xs, ys)])
-    cv2.polylines(img, [pts], False, color=(0, 1, 1), thickness=2, lineType=cv2.LINE_AA)
-    return img
+    cv2.polylines(canvas, [pts], False, color=(0, 1, 1), thickness=2, lineType=cv2.LINE_AA)
+    return canvas
 
 
 def render_lanes(img: np.ndarray, left_tracks: List[Track], right_tracks: List[Track],
-                 left_thresh: int = 50, right_thresh: int = 50, filter: bool=True) -> np.ndarray:
+                 left_thresh: int = 50, right_thresh: int = 50, confidence_thresh: float=.3) -> np.ndarray:
     assert left_tracks is not None
     assert right_tracks is not None
-    render_lane(img, left_tracks, left_thresh, filter=filter)
-    render_lane(img, right_tracks, right_thresh, filter=filter)
-    return img
+    canvas = img.copy()
+    render_lane(img, canvas, left_tracks, left_thresh, confidence_thresh)
+    render_lane(img, canvas, right_tracks, right_thresh, confidence_thresh)
+    return canvas
 
 
 def main(args):
@@ -465,7 +489,7 @@ def main(args):
             tracks_left.pop(0)
         if len(tracks_right) > max_history:
             tracks_right.pop(0)
-        render_lanes(canvas, tracks_left, tracks_right, filter=True)
+        canvas = render_lanes(canvas, tracks_left, tracks_right, filter=True)
 
         # img = cv2.resize(img, (0, 0), fx=display_scale, fy=display_scale)
         cv2.imshow('video', canvas)
