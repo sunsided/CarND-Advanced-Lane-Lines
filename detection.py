@@ -14,6 +14,12 @@ from pipeline import EdgeDetectionNaive, EdgeDetectionTemporal, EdgeDetectionCon
 from pipeline import LaneColorMasking
 
 
+Track = NamedTuple('Track', [('side', int),
+                             ('fit', Tuple[np.ndarray, Any, np.ndarray]),
+                             ('rects', list),
+                             ('curvature_radius', float)])
+
+
 def get_mask(frame: np.ndarray, edg: Optional[Union[EdgeDetectionConf, EdgeDetectionNaive]],
              tmp: Optional[Union[EdgeDetectionTemporal, EdgeDetectionSWT]],
              lcm: Optional[LaneColorMasking]) -> np.ndarray:
@@ -166,9 +172,6 @@ def search_track(mask: np.ndarray, seed_x: int, seed_y: int,
     return rects, xs, ys
 
 
-Track = NamedTuple('Track', [('side', int), ('fit', Tuple[np.ndarray, Any, np.ndarray]), ('rects', list)])
-
-
 def regress_lanes(mask: np.ndarray, k: int = 2,
                   box_width: int = 75, box_height: int = 40, threshold: Optional[int] = None,
                   degree: int = 2, search_height: int = 4,
@@ -176,7 +179,8 @@ def regress_lanes(mask: np.ndarray, k: int = 2,
                   n_smooth: int = 10, max_strikes=4, max_height: float = 0,
                   simple_check: bool = True,
                   detect_left: bool = True,
-                  detect_right: bool = True):
+                  detect_right: bool = True,
+                  mx: float=1., my: float=1.):
     h, w = mask.shape[:2]
     window = mask[-h // search_height:, ...]
     hist, bins = build_histogram(window, 2, 1)
@@ -246,15 +250,36 @@ def regress_lanes(mask: np.ndarray, k: int = 2,
 
         side = -1 if is_left(m) else (1 if is_right(m) else 0)
         assert side is not 0
-        t = Track(side=side, fit=np.polyfit(ys, xs, deg=degree), rects=track)
+
+        fit = np.polyfit(ys, xs, deg=degree)
+
+        # Measure the curvature_radius close to the vehicle (at the bottom of the image)
+        y_eval = np.max(ys)
+        coeff_a, coeff_b, coeff_c = fit
+        curvature_radius = ((1. + (2. * coeff_a * y_eval + coeff_b) ** 2.) ** 1.5) / np.abs(2. * coeff_a)
+        curvature_radius *= mx
+
+        t = Track(side=side, fit=fit, rects=track, curvature_radius=curvature_radius)
+        if side < 0:
+            print(curvature_radius)
         tracks.append(t)
     return tracks
 
 
-def render_lane(img: np.ndarray, track: Track,
-                thresh: int = 50) -> np.ndarray:
-    assert track is not None
+def blend_fits(fits: List[Tuple[np.ndarray, Any, np.ndarray]], alpha: float=0.2) -> Tuple[np.ndarray, Any, np.ndarray]:
+    blended = np.array(fits[0])
+    for i in range(1, len(fits)):
+        blended = blended * (1-alpha) + np.array(fits[i]) * alpha
+    return tuple(blended)
+
+
+def render_lane(img: np.ndarray, tracks: List[Track],
+                thresh: int = 50, filter: bool=True) -> np.ndarray:
+    assert tracks is not None
     h, w = img.shape[:2]
+
+    # We pick the latest track for rendering the rectangles.
+    track = tracks[-1]
 
     top_y = track.rects[-1][1]
     ys = np.linspace(h - 1, top_y, h - top_y)
@@ -267,6 +292,10 @@ def render_lane(img: np.ndarray, track: Track,
     for rect in track.rects:
         cv2.rectangle(img, rect[:2], rect[2:], color=(0, 0, 1), thickness=1)
 
+    # For the polylines, we add filtering across previous detections.
+    if filter:
+        fit = blend_fits([t.fit for t in tracks])
+        xs = np.polyval(fit, ys)
     pts = np.int32([(x, y) for (x, y) in zip(xs, ys)])
     cv2.polylines(img, [pts], False, color=(0, 1, 1), thickness=2, lineType=cv2.LINE_AA)
 
@@ -274,11 +303,11 @@ def render_lane(img: np.ndarray, track: Track,
 
 
 def render_lanes(img: np.ndarray, left_tracks: List[Track], right_tracks: List[Track],
-                 left_thresh: int = 50, right_thresh: int = 50) -> np.ndarray:
+                 left_thresh: int = 50, right_thresh: int = 50, filter: bool=True) -> np.ndarray:
     assert left_tracks is not None
     assert right_tracks is not None
-    render_lane(img, left_tracks[-1], left_thresh)
-    render_lane(img, right_tracks[-1], right_thresh)
+    render_lane(img, left_tracks, left_thresh, filter=filter)
+    render_lane(img, right_tracks, right_thresh, filter=filter)
     return img
 
 
@@ -319,6 +348,9 @@ def main(args):
     bev = BirdsEyeView(section,
                        section_width=3.6576,  # one lane width in meters
                        section_height=2 * 13.8826)  # two dash distances in meters
+
+    mx = bev.units_per_pixel_x
+    my = bev.units_per_pixel_y
 
     roi_mask = build_roi_mask()
     roi_mask_hard = build_roi_mask(10)
@@ -365,12 +397,24 @@ def main(args):
                                max_height=0.55,
                                max_strikes=15,
                                box_width=30, box_height=10, threshold=5,
-                               fit_weight=2, centroid_weight=1, n_smooth=10)
+                               fit_weight=2, centroid_weight=1, n_smooth=10,
+                               mx=mx, my=my)
 
-        tracks_left.append([t for t in tracks if t.side < 0][0])
-        tracks_right.append([t for t in tracks if t.side > 0][0])
+        detection_left = [t for t in tracks if t.side < 0]
+        detection_right = [t for t in tracks if t.side > 0]
+        assert len(detection_left) > 0
+        assert len(detection_right) > 0
 
-        render_lanes(canvas, tracks_left, tracks_right)
+        tracks_left.append(detection_left[0])
+        tracks_right.append(detection_right[0])
+
+        # TODO: What happens if there is no detection? In this case, we don't want to keep the previous match forever.
+        max_history = 10
+        if len(tracks_left) > max_history:
+            tracks_left.pop(0)
+        if len(tracks_right) > max_history:
+            tracks_right.pop(0)
+        render_lanes(canvas, tracks_left, tracks_right, filter=True)
 
         # img = cv2.resize(img, (0, 0), fx=display_scale, fy=display_scale)
         cv2.imshow('video', canvas)

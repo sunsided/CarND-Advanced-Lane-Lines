@@ -86,6 +86,14 @@ class BirdsEyeView:
         self._M = cv2.getPerspectiveTransform(src.astype(np.float32), dst.astype(np.float32))
         self._iM = cv2.getPerspectiveTransform(dst.astype(np.float32), src.astype(np.float32))
 
+    @property
+    def units_per_pixel_x(self):
+        return self._units_per_pixel
+
+    @property
+    def units_per_pixel_y(self):
+        return self._units_per_pixel
+
     def warp(self, img: np.ndarray) -> np.ndarray:
         """
         Warps an image into bird's eye view.
