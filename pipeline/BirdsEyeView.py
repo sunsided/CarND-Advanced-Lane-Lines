@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
-from typing import NamedTuple
-
+from typing import NamedTuple, Optional
 
 Point = NamedTuple('Point', [('x', float), ('y', float)])
 Size = NamedTuple('Size', [('width', int), ('height', int)])
@@ -103,14 +102,15 @@ class BirdsEyeView:
         warped = cv2.warpPerspective(img, self._M, (3 * self._base_width, self._projected_height))
         return warped
 
-    def unwarp(self, img: np.ndarray, size: Size) -> np.ndarray:
+    def unwarp(self, img: np.ndarray, size: Size, dst: Optional[np.ndarray]=None) -> np.ndarray:
         """
         Un-warps an image from bird's eye view.
         :param img: The image to unwarp
         :param size: The target image size
         :return: The unwarped image.
         """
-        return cv2.warpPerspective(img, self._iM, size)
+        return cv2.warpPerspective(img, self._iM, size, dst=dst,
+                                   borderMode=cv2.BORDER_TRANSPARENT if dst is not None else cv2.BORDER_CONSTANT)
 
 
 def __main():
