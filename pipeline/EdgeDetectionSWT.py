@@ -55,4 +55,5 @@ class EdgeDetectionSWT:
         gradients = get_gradients(blurred)
         swt = apply_swt(blurred, edges, gradients, edge_response=self.edge_response,
                         min_length=self.min_length, max_length=self.max_length)
-        return cv2.medianBlur(swt, self.median_window_size) if self.median_window_size > 0 else swt
+        result = cv2.medianBlur(swt, self.median_window_size) if self.median_window_size > 0 else swt
+        return np.float32(result) / 255.
