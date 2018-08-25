@@ -285,15 +285,16 @@ def blend_tracks(tracks: List[Track]) -> Optional[Fit]:
     confidences = np.array([t.confidence for t in valid_tracks])
     sqe = np.array([(1 - t.curvature_radius / curvature) ** 2 for t in valid_tracks])
     error_coeffs = np.exp(-sqe)
+    age_coeffs = np.linspace(.4, 1., len(error_coeffs))
     mask = np.ones_like(error_coeffs)
     mask[error_coeffs < 0.6] = 0
-    norm = np.sum(error_coeffs * mask * confidences)
+    norm = np.sum(error_coeffs * mask * confidences * age_coeffs)
     if norm == 0:
         return None
 
     fits = np.array([t.fit for t in valid_tracks])
     for i in range(len(fits)):
-        fits[i] *= error_coeffs[i] * mask[i] * confidences[i]
+        fits[i] *= error_coeffs[i] * mask[i] * confidences[i] * age_coeffs[i]
 
     return tuple(np.sum(fits, axis=0) / norm)
 
@@ -408,7 +409,7 @@ def recenter_rects(track: Track, rects: List[Tuple[int, int, int, int]]) -> Trac
 
 def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetectionState, mx: float, my: float,
                             left_thresh: int = 50, right_thresh: int = 50, confidence_thresh: float = .3,
-                            box_width: int=30, box_height: int=10, degree: int=2) \
+                            box_width: int=30, box_height: int=10, degree: int=2, render_boxes: bool=False) \
         -> Tuple[Tuple[bool, bool], np.ndarray]:
     tracks = []
 
@@ -454,9 +455,9 @@ def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetec
 
     state.update_history(tracks)
     left_match, canvas = detect_and_render_lane(img, edges, state.tracks_left, left_thresh,
-                                                confidence_thresh, cached=left)
+                                                confidence_thresh, cached=left, render_boxes=render_boxes)
     right_match, canvas = detect_and_render_lane(img, edges, state.tracks_right, right_thresh,
-                                                 confidence_thresh, cached=right)
+                                                 confidence_thresh, cached=right, render_boxes=render_boxes)
 
     if left_match or left_from_cache:
         should_age = not left_match and left_from_cache
@@ -465,6 +466,16 @@ def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetec
     if right_match or right_from_cache:
         should_age = not right_match and right_from_cache
         state.confirm_right(should_age)
+
+    # TODO: Unproject the fitted lines and draw in the original image space
+    #if state.left is not None and state.right is not None:
+    #   ys = np.linspace(img.shape[0] - 1, 0, 100)
+    #   xs_l = np.polyval(state.left.fit, ys)
+    #   xs_r = np.polyval(state.right.fit, ys)
+    #
+    #   xs = (xs_l + xs_r) / 2
+    #   pts = np.int32([(x, y) for (x, y) in zip(xs, ys)])
+    #   cv2.polylines(img, [pts], False, color=(.2, 1., .1), thickness=1, lineType=cv2.LINE_AA)
 
     return (left_match, right_match), canvas
 
@@ -550,9 +561,13 @@ def main(args):
 
         matches, canvas = detect_and_render_lanes(canvas, edges, state, mx, my)
 
-        # img = cv2.resize(img, (0, 0), fx=display_scale, fy=display_scale)
+        img = np.float32(img) / 255.
+        bev.unwarp(canvas, (width, height), img)
+
+        img = cv2.resize(img, (0, 0), fx=display_scale, fy=display_scale)
         cv2.imshow('edges', edges)
-        cv2.imshow('video', canvas)
+        cv2.imshow('canvas', canvas)
+        cv2.imshow('video', img)
 
         # Attempt to stay close to the original FPS.
         t_end = datetime.now()
