@@ -12,7 +12,7 @@ from typing import Tuple, List, Union, Optional
 from pipeline import CameraCalibration, BirdsEyeView, ImageSection, Point
 from pipeline import EdgeDetectionNaive, EdgeDetectionTemporal, EdgeDetectionConf, EdgeDetectionSWT
 from pipeline import LaneColorMasking
-from pipeline import LaneDetectionState, LaneFit, Fit, Track
+from pipeline import LaneDetectionState, Fit, Track
 
 
 def get_mask(frame: np.ndarray, edg: Optional[Union[EdgeDetectionConf, EdgeDetectionNaive]],
@@ -119,7 +119,7 @@ def search_track(mask: np.ndarray, seed_x: int, seed_y: int,
             indexes = np.arange(0, col_sums.shape[0])
             seed_x = rect[0] + np.int32(np.average(indexes, weights=col_sums))
 
-            # Now for the regression, we are actually using the corrected location rather than
+            # For the regression, we are actually using the corrected location rather than
             # the previous estimate.
             xs.append(seed_x)
             ys.append(seed_y)
@@ -181,7 +181,7 @@ def regress_lanes(mask: np.ndarray, k: int = 2,
                   simple_check: bool = True,
                   detect_left: bool = True,
                   detect_right: bool = True,
-                  mx: float=1., my: float=1.):
+                  mx: float = 1., my: float = 1.):
     h, w = mask.shape[:2]
     window = mask[-h // search_height:, ...]
     hist, bins = build_histogram(window, 2, 1)
@@ -252,17 +252,26 @@ def regress_lanes(mask: np.ndarray, k: int = 2,
         side = -1 if is_left(m) else (1 if is_right(m) else 0)
         if side == 0:
             continue
-        fit = np.polyfit(ys, xs, deg=degree)
-
-        xs_ = np.polyval(fit, ys)
-        rmse = np.sqrt(np.mean(np.array((xs - xs_) ** 2)))
-        confidence = max(0, 1 - np.exp(rmse - 5))
-
-        # Measure the curvature_radius close to the vehicle (at the bottom of the image)
-        y_eval = np.max(ys)
-        cr = curvature_radius(fit, y_eval, mx)
-        tracks.append(Track(side=side, fit=fit, rects=rects, curvature_radius=cr, valid=True, confidence=confidence))
+        tracks.append(create_track(side, rects, xs, ys, mx, degree))
     return tracks
+
+
+def create_track(side: int, rects: List[Tuple[int, int, int, int]], xs: Optional[List[int]], ys: Optional[List[int]], mx: float, degree: int=2) -> Track:
+    if xs is None or len(xs) == 0:
+        xs = [(r[2] + r[0]) // 2 for r in rects]
+    if ys is None or len(xs) == 0:
+        ys = [r[1] for r in rects]
+
+    fit = np.polyfit(ys, xs, deg=degree)
+    xs_ = np.polyval(fit, ys)
+    rmse = np.mean(np.array((xs - xs_) ** 2))
+    confidence = max(0, 1 - np.exp(rmse - 5))
+
+    # Measure the curvature_radius close to the vehicle (at the bottom of the image)
+    y_eval = np.max(ys)
+    cr = curvature_radius(fit, y_eval, mx)
+
+    return Track(side=side, fit=fit, rects=rects, curvature_radius=cr, valid=True, confidence=confidence)
 
 
 def blend_tracks(tracks: List[Track]) -> Optional[Fit]:
@@ -289,38 +298,57 @@ def blend_tracks(tracks: List[Track]) -> Optional[Fit]:
     return tuple(np.sum(fits, axis=0) / norm)
 
 
-def validate_fit(img: np.ndarray, fit: Fit, lo: float=.05, hi: float=.8, min_support: float=.1) -> bool:
-    assert fit is not None
+def validate_fit(img: np.ndarray, fit: Optional[Fit], lo: float = .05, hi: float = .8,
+                 box_width: int = 75, box_height: int = 40,
+                 min_support: float = .25) -> Optional[List[Tuple[int, int, int, int]]]:
+    if fit is None:
+        return None
     h, w = img.shape[:2]
 
     # We now evaluate the interpolated track in order to check for support in the image.
-    box_height = 16
-    box_hwidth = 30 // 2
+    box_hwidth = box_width // 2
     top_y = h // 2
-    ys = np.linspace(h - 1, top_y, (h - top_y) / 16)
+    ys = np.linspace(h - 1, top_y, (h - top_y) / box_height)
     xs = np.polyval(fit, ys)
 
-    supported = []
+    supported, rects = [], []
     for yb, x in zip(ys, xs):
         xl = int(max(0, x - box_hwidth))
         xr = int(min(w - 1, x + box_hwidth))
         yb = int(yb)
         yt = int(max(0, yb - box_height))
         window = img[yt:yb, xl:xr]
-        support = np.sum(window) / np.prod(window.shape)
+        area = np.prod(window.shape)
+        if area == 0:
+            break
+        support = np.sqrt(np.sum(window) / np.prod(window.shape))
+
+        # We now find the centroid of the window again and refine the X coordinate.
+        if support > 0:
+            col_sums = np.squeeze(window.sum(axis=0))
+            if len(col_sums.shape) != 1:
+                continue
+            indexes = np.arange(0, col_sums.shape[0])
+            x_centroid = np.int32(np.average(indexes, weights=col_sums))
+            xl = xl + x_centroid - box_hwidth
+            xr = int(min(w - 1, xl + box_width))
+
+        rects.append((xl, yt, xr, yb))
         supported.append(1. if lo < support < hi else 0)
 
     support = float(np.mean(supported))
-    return support >= min_support
+    if support < min_support:
+        return None
+    return rects
 
 
-def render_lane(canvas: np.ndarray, fit: Fit, highest_rect: Optional[float]=None) -> np.ndarray:
+def render_lane(canvas: np.ndarray, fit: Fit, highest_rect: Optional[float] = None, color=(1, 0.5, 0.1)) -> np.ndarray:
     h, w = canvas.shape[:2]
     highest_rect = min(h // 2, highest_rect) if highest_rect is not None else h // 2
     ys = np.linspace(h - 1, highest_rect, h - highest_rect)
     xs = np.polyval(fit, ys)
     pts = np.int32([(x, y) for (x, y) in zip(xs, ys)])
-    cv2.polylines(canvas, [pts], False, color=(1, 0.5, 0.1), thickness=4, lineType=cv2.LINE_AA)
+    cv2.polylines(canvas, [pts], False, color=color, thickness=4, lineType=cv2.LINE_AA)
     return canvas
 
 
@@ -330,10 +358,12 @@ def render_rects(canvas: np.ndarray, rects: List[Tuple[int, int, int, int]], alp
     return canvas
 
 
-def detect_and_render_lane(canvas: np.ndarray, edges: np.ndarray, state: LaneDetectionState, tracks: List[Track],
-                           offset_thresh: int, confidence_thresh: float, render_boxes: bool=True) -> Tuple[bool, np.ndarray]:
+def detect_and_render_lane(canvas: np.ndarray, edges: np.ndarray, tracks: List[Track],
+                           offset_thresh: int, confidence_thresh: float, render_boxes: bool = True,
+                           cached: Optional[Track]=None) -> Tuple[bool, np.ndarray]:
     assert tracks is not None
     h, w = edges.shape[:2]
+    cached_color = (0.75, 0.1, 1)
 
     # We pick the latest track for rendering the rectangles.
     track = tracks[-1]
@@ -349,6 +379,8 @@ def detect_and_render_lane(canvas: np.ndarray, edges: np.ndarray, state: LaneDet
         if xs[0] < offset_thresh or xs[0] > (w - offset_thresh) or track.confidence < confidence_thresh:
             if render_boxes:
                 render_rects(canvas, track.rects, 0.25)
+            if cached is not None:
+                canvas = render_lane(canvas, cached.fit, highest_rect, cached_color)
             return False, canvas
         if render_boxes:
             render_rects(canvas, track.rects, 1)
@@ -356,34 +388,84 @@ def detect_and_render_lane(canvas: np.ndarray, edges: np.ndarray, state: LaneDet
     # Interpolate the tracks based on their deviation of curvature from the consensus.
     # Validate the interpolated fit against support in the image. If none is found, discard.
     fit = blend_tracks(tracks)
+    valid = True
     if fit is None:
-        return False, canvas
-    if not validate_fit(edges, fit):
-        return False, canvas
-    canvas = render_lane(canvas, fit, highest_rect)
-    return True, canvas
+        valid = False
+    if valid and validate_fit(edges, fit) is None:
+        valid = False
+    if valid:
+        canvas = render_lane(canvas, fit, highest_rect)
+    elif cached is not None:
+        canvas = render_lane(canvas, cached.fit, highest_rect, cached_color)
+    return valid, canvas
+
+
+def recenter_rects(track: Track, rects: List[Tuple[int, int, int, int]]) -> Track:
+    return Track(side=track.side, valid=track.valid, fit=track.fit,
+                 confidence=track.confidence, rects=rects,
+                 curvature_radius=track.curvature_radius)
 
 
 def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetectionState, mx: float, my: float,
-                            left_thresh: int = 50, right_thresh: int = 50, confidence_thresh: float=.3) \
+                            left_thresh: int = 50, right_thresh: int = 50, confidence_thresh: float = .3,
+                            box_width: int=30, box_height: int=10, degree: int=2) \
         -> Tuple[Tuple[bool, bool], np.ndarray]:
+    tracks = []
 
-    # TODO: Check if we have a track of a lane; if there is enough support, use it.
-    # TODO: If there is no track, obtain it.
-    # TODO: If it still isn't supported, use the previous hit unless it's too old.
+    left = state.left
+    left_from_cache = False
 
-    tracks = regress_lanes(edges,
-                           k=2, degree=2,
-                           search_height=10,
-                           max_height=0.55,
-                           max_strikes=15,
-                           box_width=30, box_height=10, threshold=5,
-                           fit_weight=2, centroid_weight=1, n_smooth=10,
-                           mx=mx, my=my)
-    state.update(tracks)
+    if left is not None:
+        rects = validate_fit(edges, left.fit, box_width=box_width, box_height=box_height)
+        if rects is not None:
+            left = create_track(-1, rects, xs=None, ys=None, mx=mx, degree=degree)
+            if left.confidence > confidence_thresh:
+                left = recenter_rects(left, rects)
+                tracks.append(left)
+                left_from_cache = True
 
-    left_match, canvas = detect_and_render_lane(img, edges, state, state.tracks_left, left_thresh, confidence_thresh)
-    right_match, canvas = detect_and_render_lane(img, edges, state, state.tracks_right, right_thresh, confidence_thresh)
+    if not left_from_cache:
+        state.age_left()
+
+    right = state.right
+    right_from_cache = False
+
+    if right is not None:
+        rects = validate_fit(edges, right.fit, box_width=box_width, box_height=box_height)
+        if rects is not None:
+            right = create_track(1, rects, xs=None, ys=None, mx=mx, degree=degree)
+            if right.confidence > confidence_thresh:
+                right = recenter_rects(right, rects)
+                tracks.append(right)
+                right_from_cache = True
+
+    if not right_from_cache:
+        state.age_right()
+
+    if not left_from_cache or not right_from_cache:
+        new_tracks = regress_lanes(edges, k=2, degree=degree,
+                                   search_height=10, max_height=0.55,
+                                   max_strikes=15, box_width=box_width, box_height=box_height, threshold=5,
+                                   fit_weight=2, centroid_weight=1, n_smooth=10,
+                                   mx=mx, my=my,
+                                   detect_left=not left_from_cache,
+                                   detect_right=not right_from_cache)
+        tracks.extend(new_tracks)
+
+    state.update_history(tracks)
+    left_match, canvas = detect_and_render_lane(img, edges, state.tracks_left, left_thresh,
+                                                confidence_thresh, cached=left)
+    right_match, canvas = detect_and_render_lane(img, edges, state.tracks_right, right_thresh,
+                                                 confidence_thresh, cached=right)
+
+    if left_match or left_from_cache:
+        should_age = not left_match and left_from_cache
+        state.confirm_left(should_age)
+
+    if right_match or right_from_cache:
+        should_age = not right_match and right_from_cache
+        state.confirm_right(should_age)
+
     return (left_match, right_match), canvas
 
 
