@@ -14,10 +14,18 @@ from pipeline import EdgeDetectionNaive, EdgeDetectionTemporal, EdgeDetectionCon
 from pipeline import LaneColorMasking
 
 
-Track = NamedTuple('Track', [('side', int),
+Track = NamedTuple('Track', [('side', int), ('valid', bool),
                              ('fit', Tuple[np.ndarray, Any, np.ndarray]),
                              ('rects', list),
                              ('curvature_radius', float)])
+
+InvalidLeftTrack = Track(side=-1, valid=False, curvature_radius=float('inf'),
+                         fit=tuple(np.zeros((3,), np.float32)),
+                         rects=[])
+
+InvalidRightTrack = Track(side=1, valid=False, curvature_radius=float('inf'),
+                          fit=tuple(np.zeros((3, ), np.float32)),
+                          rects=[])
 
 
 def get_mask(frame: np.ndarray, edg: Optional[Union[EdgeDetectionConf, EdgeDetectionNaive]],
@@ -250,7 +258,6 @@ def regress_lanes(mask: np.ndarray, k: int = 2,
 
         side = -1 if is_left(m) else (1 if is_right(m) else 0)
         assert side is not 0
-
         fit = np.polyfit(ys, xs, deg=degree)
 
         # Measure the curvature_radius close to the vehicle (at the bottom of the image)
@@ -259,17 +266,27 @@ def regress_lanes(mask: np.ndarray, k: int = 2,
         curvature_radius = ((1. + (2. * coeff_a * y_eval + coeff_b) ** 2.) ** 1.5) / np.abs(2. * coeff_a)
         curvature_radius *= mx
 
-        t = Track(side=side, fit=fit, rects=track, curvature_radius=curvature_radius)
-        if side < 0:
+        t = Track(side=side, fit=fit, rects=track, curvature_radius=curvature_radius, valid=True)
+        if side > 0:
             print(curvature_radius)
         tracks.append(t)
     return tracks
 
 
-def blend_fits(fits: List[Tuple[np.ndarray, Any, np.ndarray]], alpha: float=0.2) -> Tuple[np.ndarray, Any, np.ndarray]:
-    blended = np.array(fits[0])
-    for i in range(1, len(fits)):
-        blended = blended * (1-alpha) + np.array(fits[i]) * alpha
+def blend_fits(tracks: List[Track], alpha: float=0.2) -> Optional[Tuple[np.ndarray, Any, np.ndarray]]:
+    assert len(tracks) > 0
+    offset = 0
+    while offset < len(tracks) and not tracks[offset].valid:
+        offset += 1
+    if offset == len(tracks):
+        return None
+
+    blended = tracks[offset].fit
+    for i in range(offset + 1, len(tracks)):
+        if not tracks[i].valid:
+            continue
+        fit = tracks[i].fit
+        blended = blended * (1-alpha) + np.array(fit) * alpha
     return tuple(blended)
 
 
@@ -280,25 +297,39 @@ def render_lane(img: np.ndarray, tracks: List[Track],
 
     # We pick the latest track for rendering the rectangles.
     track = tracks[-1]
+    assert track is not None
 
-    top_y = track.rects[-1][1]
-    ys = np.linspace(h - 1, top_y, h - top_y)
-    xs = np.polyval(track.fit, ys)
-    if xs[0] < thresh or xs[0] > (w - thresh):
+    # The rendering of the lane line estimate will extend up to either
+    # the "highest" position of a matched box or half the image size.
+    highest_rect = h // 2
+    if track.valid:
+        highest_rect = track.rects[-1][1]
+        ys = np.linspace(h - 1, highest_rect, h - highest_rect)
+        xs = np.polyval(track.fit, ys)
+        if xs[0] < thresh or xs[0] > (w - thresh):
+            for rect in track.rects:
+                cv2.rectangle(img, rect[:2], rect[2:], color=(0, 0, .25), thickness=1)
+            return img
         for rect in track.rects:
-            cv2.rectangle(img, rect[:2], rect[2:], color=(0, 0, .25), thickness=1)
-        return img
+            cv2.rectangle(img, rect[:2], rect[2:], color=(0, 0, 1), thickness=1)
 
-    for rect in track.rects:
-        cv2.rectangle(img, rect[:2], rect[2:], color=(0, 0, 1), thickness=1)
+    # Select the topmost position for lane line extrapolation.
+    top_y = min(h // 2, highest_rect)
+    ys = np.linspace(h - 1, top_y, h - top_y)
 
     # For the polylines, we add filtering across previous detections.
     if filter:
-        fit = blend_fits([t.fit for t in tracks])
+        fit = blend_fits(tracks)
+        if fit is None:
+            # TODO: Start search from scratch!
+            return img
         xs = np.polyval(fit, ys)
+    elif not track.valid:
+        return img
+
+    # noinspection PyUnboundLocalVariable
     pts = np.int32([(x, y) for (x, y) in zip(xs, ys)])
     cv2.polylines(img, [pts], False, color=(0, 1, 1), thickness=2, lineType=cv2.LINE_AA)
-
     return img
 
 
@@ -372,6 +403,7 @@ def main(args):
         ret, img = cap.read()
         if not ret:
             break
+        print('Processing frame {} ...'.format(cap.get(cv2.CAP_PROP_POS_FRAMES)))
 
         img, _ = cc.undistort(img, False)
         warped = bev.warp(img)
@@ -402,13 +434,10 @@ def main(args):
 
         detection_left = [t for t in tracks if t.side < 0]
         detection_right = [t for t in tracks if t.side > 0]
-        assert len(detection_left) > 0
-        assert len(detection_right) > 0
 
-        tracks_left.append(detection_left[0])
-        tracks_right.append(detection_right[0])
+        tracks_left.append(detection_left[0] if len(detection_left) > 0 else InvalidLeftTrack)
+        tracks_right.append(detection_right[0] if len(detection_right) > 0 else InvalidRightTrack)
 
-        # TODO: What happens if there is no detection? In this case, we don't want to keep the previous match forever.
         max_history = 10
         if len(tracks_left) > max_history:
             tracks_left.pop(0)
@@ -423,6 +452,7 @@ def main(args):
         t_end = datetime.now()
         t_delta = (t_end - t_start).total_seconds() * 1000
         t_wait = int(max(1, fps - t_delta))
+
         if cv2.waitKey(t_wait) == 27:
             break
 
