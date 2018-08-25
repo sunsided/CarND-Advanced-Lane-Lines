@@ -23,10 +23,6 @@ Component = List[Position]
 ImageOrValue = TypeVar('ImageOrValue', float, Image)
 Gradients = NamedTuple('Gradients', [('x', GradientImage), ('y', GradientImage)])
 
-from concurrent.futures import ThreadPoolExecutor
-
-executor = ThreadPoolExecutor(max_workers=4)
-
 
 def get_edges(im: Image, lo: float=175, hi: float=220, window: int=3) -> Image:
     """
@@ -88,10 +84,7 @@ def apply_swt(im: Image, edges: Image, gradients: Gradients, min_length: float=0
     # Suppress edges with low activation
     norm_thresh_sq = edge_response ** 2
 
-    # Find a pixel that lies on an edge.
-    height, width = im.shape[0:2]
-
-    def process_row(y: int) -> List[Ray]:
+    def process_row(y: int, width: int, edges: np.ndarray, norms: np.ndarray):
         """
         Processes a single image row.
         :param y: The y coordinate.
@@ -100,7 +93,6 @@ def apply_swt(im: Image, edges: Image, gradients: Gradients, min_length: float=0
         :param norms: The edge norms.
         :return: The list of detected rays.
         """
-        nonlocal width, edges, norms
         rays = []
         for x in range(width):
             # Edges are either 0. or 1.
@@ -115,11 +107,10 @@ def apply_swt(im: Image, edges: Image, gradients: Gradients, min_length: float=0
                 rays.append(ray)
         return rays
 
-    #for y in range(height):
-    #    rays.extend(process_row(y, width, edges, norms))
-
-    for row_rays in executor.map(process_row, range(height)):
-        rays.extend(row_rays)
+    # Find a pixel that lies on an edge.
+    height, width = im.shape[0:2]
+    for y in range(height):
+        rays.extend(process_row(y, width, edges, norms))
 
     # Multiple rays may cross the same pixel in scenarios where edges are due to noise.
     # Each line crossing counts as a hit. By taking the inverse of each pixel, lines that
@@ -163,6 +154,11 @@ def swt_process_pixel(pos: Position, edges: Image, directions: Gradients, out: O
     input_dir_x = directions.x[pos.y, pos.x]
     input_dir_y = directions.y[pos.y, pos.x]
     if input_dir_x == 0 and input_dir_y == 0:
+        return None
+
+    # Since a line can be obtained bidirectional, we limit our search to positive X and Y
+    # directions only. If we don't, we end up with twice the number of rays.
+    if input_dir_x < 0:
         return None
 
     # Normalize the directions
