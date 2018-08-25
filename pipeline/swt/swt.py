@@ -23,6 +23,10 @@ Component = List[Position]
 ImageOrValue = TypeVar('ImageOrValue', float, Image)
 Gradients = NamedTuple('Gradients', [('x', GradientImage), ('y', GradientImage)])
 
+from concurrent.futures import ThreadPoolExecutor
+
+executor = ThreadPoolExecutor(max_workers=4)
+
 
 def get_edges(im: Image, lo: float=175, hi: float=220, window: int=3) -> Image:
     """
@@ -86,7 +90,18 @@ def apply_swt(im: Image, edges: Image, gradients: Gradients, min_length: float=0
 
     # Find a pixel that lies on an edge.
     height, width = im.shape[0:2]
-    for y in range(height):
+
+    def process_row(y: int) -> List[Ray]:
+        """
+        Processes a single image row.
+        :param y: The y coordinate.
+        :param width: The width of the row.
+        :param edges: The edge map.
+        :param norms: The edge norms.
+        :return: The list of detected rays.
+        """
+        nonlocal width, edges, norms
+        rays = []
         for x in range(width):
             # Edges are either 0. or 1.
             if edges[y, x] < .5:
@@ -98,6 +113,13 @@ def apply_swt(im: Image, edges: Image, gradients: Gradients, min_length: float=0
                                     min_length=min_length, max_length=max_length)
             if ray:
                 rays.append(ray)
+        return rays
+
+    #for y in range(height):
+    #    rays.extend(process_row(y, width, edges, norms))
+
+    for row_rays in executor.map(process_row, range(height)):
+        rays.extend(row_rays)
 
     # Multiple rays may cross the same pixel in scenarios where edges are due to noise.
     # Each line crossing counts as a hit. By taking the inverse of each pixel, lines that
