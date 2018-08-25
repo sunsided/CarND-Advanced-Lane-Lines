@@ -15,9 +15,9 @@ from pipeline import LaneColorMasking
 
 
 Track = NamedTuple('Track', [('side', int), ('valid', bool),
+                             ('curvature_radius', float),
                              ('fit', Tuple[np.ndarray, Any, np.ndarray]),
-                             ('rects', list),
-                             ('curvature_radius', float)])
+                             ('rects', list)])
 
 InvalidLeftTrack = Track(side=-1, valid=False, curvature_radius=float('inf'),
                          fit=tuple(np.zeros((3,), np.float32)),
@@ -257,7 +257,8 @@ def regress_lanes(mask: np.ndarray, k: int = 2,
             continue
 
         side = -1 if is_left(m) else (1 if is_right(m) else 0)
-        assert side is not 0
+        if side == 0:
+            continue
         fit = np.polyfit(ys, xs, deg=degree)
 
         # Measure the curvature_radius close to the vehicle (at the bottom of the image)
@@ -273,21 +274,27 @@ def regress_lanes(mask: np.ndarray, k: int = 2,
     return tracks
 
 
-def blend_fits(tracks: List[Track], alpha: float=0.2) -> Optional[Tuple[np.ndarray, Any, np.ndarray]]:
+def blend_fits(tracks: List[Track]) -> Optional[Tuple[np.ndarray, Any, np.ndarray]]:
     assert len(tracks) > 0
-    offset = 0
-    while offset < len(tracks) and not tracks[offset].valid:
-        offset += 1
-    if offset == len(tracks):
+
+    valid_tracks = [t for t in tracks if t.valid]
+    if len(valid_tracks) == 0:
         return None
 
-    blended = tracks[offset].fit
-    for i in range(offset + 1, len(tracks)):
-        if not tracks[i].valid:
-            continue
-        fit = tracks[i].fit
-        blended = blended * (1-alpha) + np.array(fit) * alpha
-    return tuple(blended)
+    curvature = np.mean([t.curvature_radius for t in valid_tracks])
+    sqe = np.array([(1 - t.curvature_radius / curvature) ** 2 for t in valid_tracks])
+    error_coeffs = np.exp(-sqe)
+    mask = np.ones_like(error_coeffs)
+    mask[error_coeffs < 0.7] = 0
+    if np.sum(mask) == 0:
+        return None
+    norm = np.sum(error_coeffs * mask)
+
+    fits = np.array([t.fit for t in valid_tracks])
+    for i in range(len(fits)):
+        fits[i] *= error_coeffs[i] * mask[i]
+
+    return tuple(np.sum(fits, axis=0) / norm)
 
 
 def render_lane(img: np.ndarray, tracks: List[Track],
