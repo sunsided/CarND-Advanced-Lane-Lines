@@ -364,9 +364,24 @@ def detect_and_render_lane(canvas: np.ndarray, edges: np.ndarray, state: LaneDet
     return True, canvas
 
 
-def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetectionState,
+def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetectionState, mx: float, my: float,
                             left_thresh: int = 50, right_thresh: int = 50, confidence_thresh: float=.3) \
         -> Tuple[Tuple[bool, bool], np.ndarray]:
+
+    # TODO: Check if we have a track of a lane; if there is enough support, use it.
+    # TODO: If there is no track, obtain it.
+    # TODO: If it still isn't supported, use the previous hit unless it's too old.
+
+    tracks = regress_lanes(edges,
+                           k=2, degree=2,
+                           search_height=10,
+                           max_height=0.55,
+                           max_strikes=15,
+                           box_width=30, box_height=10, threshold=5,
+                           fit_weight=2, centroid_weight=1, n_smooth=10,
+                           mx=mx, my=my)
+    state.update(tracks)
+
     left_match, canvas = detect_and_render_lane(img, edges, state, state.tracks_left, left_thresh, confidence_thresh)
     right_match, canvas = detect_and_render_lane(img, edges, state, state.tracks_right, right_thresh, confidence_thresh)
     return (left_match, right_match), canvas
@@ -451,17 +466,7 @@ def main(args):
         edges = get_mask(warped, edg, swt, lcm) * roi_mask_hard
         canvas = warped_f.copy()
 
-        tracks = regress_lanes(edges,
-                               k=2, degree=2,
-                               search_height=10,
-                               max_height=0.55,
-                               max_strikes=15,
-                               box_width=30, box_height=10, threshold=5,
-                               fit_weight=2, centroid_weight=1, n_smooth=10,
-                               mx=mx, my=my)
-
-        state.update(tracks)
-        matches, canvas = detect_and_render_lanes(canvas, edges, state)
+        matches, canvas = detect_and_render_lanes(canvas, edges, state, mx, my)
 
         # img = cv2.resize(img, (0, 0), fx=display_scale, fy=display_scale)
         cv2.imshow('edges', edges)
