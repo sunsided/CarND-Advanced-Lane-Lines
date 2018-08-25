@@ -15,7 +15,8 @@ from pipeline import LaneColorMasking
 
 
 def get_mask(frame: np.ndarray, edg: Optional[Union[EdgeDetectionConf, EdgeDetectionNaive]],
-             tmp: Optional[EdgeDetectionTemporal], lcm: Optional[LaneColorMasking]) -> np.ndarray:
+             tmp: Optional[Union[EdgeDetectionTemporal, EdgeDetectionSWT]],
+             lcm: Optional[LaneColorMasking]) -> np.ndarray:
     lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
 
     mask_sum = np.ones(lab.shape[:2], np.float32)
@@ -183,10 +184,16 @@ def regress_lanes(mask: np.ndarray, k: int = 2,
     if len(maxima) == 0:
         return []
 
+    def is_left(m) -> bool:
+        return (60 < m) & (m < 140)
+
+    def is_right(m) -> bool:
+        return (160 < m) & (m < 240)
+
     if simple_check:
         maxima = np.array(maxima)
-        left = np.argmax((60 < maxima) & (maxima < 140)) if detect_left else None
-        right = np.argmax((160 < maxima) & (maxima < 240)) if detect_right else None
+        left = np.argmax(is_left(maxima)) if detect_left else None
+        right = np.argmax(is_right(maxima)) if detect_right else None
 
         if left is not None and right is not None:
             good_maxima = [maxima[int(left)], maxima[int(right)]]
@@ -236,7 +243,10 @@ def regress_lanes(mask: np.ndarray, k: int = 2,
                                      max_height=max_height)
         if len(xs) < 3:
             continue
-        t = Track(side=0, fit=np.polyfit(ys, xs, deg=degree), rects=track)
+
+        side = -1 if is_left(m) else (1 if is_right(m) else 0)
+        assert side is not 0
+        t = Track(side=side, fit=np.polyfit(ys, xs, deg=degree), rects=track)
         tracks.append(t)
     return tracks
 
@@ -305,7 +315,7 @@ def main(args):
     roi_mask_hard = build_roi_mask(10)
 
     edg = EdgeDetectionNaive(detect_lines=False, mask=roi_mask)
-    swt = EdgeDetectionSWT(mask=roi_mask, max_length=10)
+    swt = EdgeDetectionSWT(mask=roi_mask, max_length=8)
     edt = EdgeDetectionTemporal(mask=roi_mask, detect_lines=False)
 
     lcm = LaneColorMasking(luminance_kernel_width=33)

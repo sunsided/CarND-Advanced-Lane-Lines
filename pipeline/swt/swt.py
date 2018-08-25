@@ -123,7 +123,7 @@ def apply_swt(im: Image, edges: Image, gradients: Gradients, min_length: float=0
 
 
 def swt_process_pixel(pos: Position, edges: Image, directions: Gradients, out: Optional[Image] = None,
-                       min_length: float=0, max_length: float=float('inf')) -> Optional[Ray]:
+                      min_length: float=0, max_length: float=float('inf')) -> Optional[Ray]:
     """
     Obtains the stroke width starting from the specified position.
     :param pos: The starting point
