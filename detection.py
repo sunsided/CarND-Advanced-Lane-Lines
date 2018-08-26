@@ -20,11 +20,19 @@ def main(args):
     if not cap:
         print('Failed reading video file.')
         return
+
     fps = cap.get(cv2.CAP_PROP_FPS)
 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     display_scale = 1024 * 768 / (width * height)
+
+    wrt = None
+    if args.write:
+        # out_file = os.path.splitext(os.path.basename(args.file))
+        # out_file = os.path.join('out', '{}-processed.mp4'.format(out_file[0]))
+        out_file = args.write
+        wrt = cv2.VideoWriter(out_file, cv2.VideoWriter_fourcc(*'mp4v'), fps, (1848, 720))
 
     cc = CameraCalibration.from_pickle('calibration.pkl')
 
@@ -224,10 +232,19 @@ def main(args):
             text = 'Curvature radius: none'
         cv2.putText(img, text, (4, 48), cv2.FONT_HERSHEY_DUPLEX, 0.75, (1, 1, 1), 1, cv2.LINE_AA)
 
-        img = cv2.resize(img, (0, 0), fx=display_scale, fy=display_scale)
-        cv2.imshow('edges', edges)
-        cv2.imshow('canvas', canvas)
-        cv2.imshow('video', img)
+        scale = img.shape[0] / edges.shape[0]
+        edges = cv2.resize(edges, (int(scale*edges.shape[1]), img.shape[0]))
+        canvas = cv2.resize(canvas, (int(scale * canvas.shape[1]), img.shape[0]))
+        edges = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
+
+        img = np.hstack([img, edges, canvas])
+        if wrt is not None:
+            assert img.shape[:2] == (720, 1848)
+            img = np.uint8(np.clip(img * 255, 0, 255))
+            wrt.write(img)
+
+        resized = cv2.resize(img, (0, 0), fx=display_scale, fy=display_scale)
+        cv2.imshow('video', resized)
 
         # Attempt to stay close to the original FPS.
         t_end = datetime.now()
@@ -237,12 +254,18 @@ def main(args):
         if cv2.waitKey(t_wait) == 27:
             break
 
+    if wrt is not None:
+        wrt.release()
+    cap.release()
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
     v = parser.add_argument_group('Video')
     v.add_argument(metavar='VIDEO', dest='file', default='project_video.mp4',
                    help='The video file to process.')
+    v.add_argument('-w', '--write', dest='write', default=None,
+                   help='Writes an output video file')
     args = parser.parse_args()
     if not os.path.exists(args.file):
         parser.error('The specified video {} could not be found.'.format(args.file))

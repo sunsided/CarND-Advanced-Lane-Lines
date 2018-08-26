@@ -9,7 +9,7 @@ the stroke of the lane should roughly be constant and within expected bounds.
 This code is copied and adjusted from my original project at https://github.com/sunsided/stroke-width-transform.
 """
 
-from typing import TypeVar, NamedTuple, List, Optional, Tuple
+from typing import TypeVar, NamedTuple, List, Optional
 import cv2
 import numpy as np
 
