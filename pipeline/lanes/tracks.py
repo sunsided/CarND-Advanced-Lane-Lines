@@ -214,6 +214,19 @@ def create_track(side: int, rects: List[Tuple[int, int, int, int]], xs: Optional
     return Track(side=side, fit=fit, rects=rects, curvature_radius=cr, valid=True, confidence=confidence)
 
 
+def get_points(fit: Fit, y_lo: float, y_hi: float) -> np.ndarray:
+    """
+    Evaluates a fit in the specified Y value range.
+    :param fit: The fit to evaluate.
+    :param y_lo: The lower Y coordinate.
+    :param y_hi: The higher Y coordinate.
+    :return: The array of (X,Y) coordinates.
+    """
+    ys = np.linspace(y_lo, y_hi, int(abs(y_hi - y_lo) + 1))
+    xs = np.polyval(fit, ys)
+    return np.array([[x, y] for (x, y) in zip(xs, ys)], np.float32)
+
+
 def blend_tracks(tracks: List[Track]) -> Optional[Fit]:
     assert len(tracks) > 0
 

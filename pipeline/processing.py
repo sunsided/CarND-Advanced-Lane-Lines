@@ -4,8 +4,12 @@ from typing import Optional, List, Tuple
 from pipeline import LaneDetectionState, validate_fit, create_track, recenter_rects, regress_lanes, Track, Fit, \
     blend_tracks
 
+VALID_COLOR = (1, 0.5, 0.1)
+CACHED_COLOR = (0.75, 0.1, 1)
+WARNING_COLOR = (0.05, 0.1, 1)
 
-def render_lane(canvas: np.ndarray, fit: Fit, highest_rect: Optional[float] = None, color=(1, 0.5, 0.1)) -> np.ndarray:
+
+def render_lane(canvas: np.ndarray, fit: Fit, highest_rect: Optional[float] = None, color=VALID_COLOR) -> np.ndarray:
     h, w = canvas.shape[:2]
     highest_rect = min(h // 2, highest_rect) if highest_rect is not None else h // 2
     ys = np.linspace(h - 1, highest_rect, h - highest_rect)
@@ -23,11 +27,10 @@ def render_rects(canvas: np.ndarray, rects: List[Tuple[int, int, int, int]], alp
 
 def detect_and_render_lane(canvas: np.ndarray, edges: np.ndarray, tracks: List[Track],
                            offset_thresh: int, confidence_thresh: float,
-                           render_lanes: bool=False, render_boxes: bool = True,
-                           cached: Optional[Track]=None) -> Tuple[bool, np.ndarray]:
+                           render_lanes: bool = False, render_boxes: bool = True,
+                           cached: Optional[Track] = None) -> Tuple[bool, Optional[Fit]]:
     assert tracks is not None
     h, w = edges.shape[:2]
-    cached_color = (0.75, 0.1, 1)
 
     # We pick the latest track for rendering the rectangles.
     track = tracks[-1]
@@ -44,8 +47,8 @@ def detect_and_render_lane(canvas: np.ndarray, edges: np.ndarray, tracks: List[T
             if render_boxes:
                 render_rects(canvas, track.rects, 0.25)
             if cached is not None and render_lanes:
-                canvas = render_lane(canvas, cached.fit, highest_rect, cached_color)
-            return False, canvas
+                render_lane(canvas, cached.fit, highest_rect, CACHED_COLOR)
+            return False, cached.fit if cached is not None else None
         if render_boxes:
             render_rects(canvas, track.rects, 1)
 
@@ -57,18 +60,22 @@ def detect_and_render_lane(canvas: np.ndarray, edges: np.ndarray, tracks: List[T
         valid = False
     if valid and validate_fit(edges, fit) is None:
         valid = False
-    if valid and render_lanes:
-        canvas = render_lane(canvas, fit, highest_rect)
-    elif cached is not None and render_lanes:
-        canvas = render_lane(canvas, cached.fit, highest_rect, cached_color)
-    return valid, canvas
+    if valid:
+        if render_lanes:
+            render_lane(canvas, fit, highest_rect)
+        return True, fit
+    elif cached is not None:
+        if render_lanes:
+            render_lane(canvas, cached.fit, highest_rect, CACHED_COLOR)
+        return False, cached.fit
+    return False, None
 
 
 def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetectionState, mx: float, my: float,
                             left_thresh: int = 50, right_thresh: int = 50, confidence_thresh: float = .3,
-                            box_width: int=30, box_height: int=10, degree: int=2,
-                            render_lanes: bool=False, render_boxes: bool=False) \
-        -> Tuple[Tuple[bool, bool], np.ndarray]:
+                            box_width: int = 30, box_height: int = 10, degree: int = 2,
+                            render_lanes: bool = False, render_boxes: bool = False) \
+        -> Tuple[Tuple[bool, Optional[Fit]], Tuple[bool, Optional[Fit]]]:
     tracks = []
 
     left = state.left
@@ -112,29 +119,19 @@ def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetec
         tracks.extend(new_tracks)
 
     state.update_history(tracks)
-    left_match, canvas = detect_and_render_lane(img, edges, state.tracks_left, left_thresh,
-                                                confidence_thresh, cached=left,
-                                                render_lanes=render_lanes, render_boxes=render_boxes)
-    right_match, canvas = detect_and_render_lane(img, edges, state.tracks_right, right_thresh,
-                                                 confidence_thresh, cached=right,
-                                                 render_lanes=render_lanes, render_boxes=render_boxes)
+    left_match, left_fit = detect_and_render_lane(img, edges, state.tracks_left, left_thresh,
+                                                  confidence_thresh, cached=left,
+                                                  render_lanes=render_lanes, render_boxes=render_boxes)
+    right_match, right_fit = detect_and_render_lane(img, edges, state.tracks_right, right_thresh,
+                                                    confidence_thresh, cached=right,
+                                                    render_lanes=render_lanes, render_boxes=render_boxes)
 
-    if left_match or left_from_cache:
+    if left_match or left_from_cache and left_fit is not None:
         should_age = not left_match and left_from_cache
         state.confirm_left(should_age)
 
-    if right_match or right_from_cache:
+    if right_match or right_from_cache and right_fit is not None:
         should_age = not right_match and right_from_cache
         state.confirm_right(should_age)
 
-    # TODO: Unproject the fitted lines and draw in the original image space
-    #if state.left is not None and state.right is not None:
-    #   ys = np.linspace(img.shape[0] - 1, 0, 100)
-    #   xs_l = np.polyval(state.left.fit, ys)
-    #   xs_r = np.polyval(state.right.fit, ys)
-    #
-    #   xs = (xs_l + xs_r) / 2
-    #   pts = np.int32([(x, y) for (x, y) in zip(xs, ys)])
-    #   cv2.polylines(img, [pts], False, color=(.2, 1., .1), thickness=1, lineType=cv2.LINE_AA)
-
-    return (left_match, right_match), canvas
+    return (left_match, left_fit), (right_match, right_fit)

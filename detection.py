@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 from datetime import datetime
 
-from pipeline import ImageSection, detect_and_render_lanes
+from pipeline import ImageSection, detect_and_render_lanes, VALID_COLOR, CACHED_COLOR, WARNING_COLOR
 from pipeline.preprocessing import detect_lane_pixels
 from pipeline.transform import *
 from pipeline.edges import *
@@ -94,12 +94,41 @@ def main(args):
         edges = detect_lane_pixels(warped, edg, swt, lcm) * roi_mask_hard
         canvas = warped_f.copy()
 
-        matches, canvas = detect_and_render_lanes(canvas, edges, state, mx, my, render_lanes=True, render_boxes=True)
+        results = detect_and_render_lanes(canvas, edges, state, mx, my, render_lanes=True, render_boxes=True)
+        (left_valid, left), (right_valid, right) = results
 
         img = np.float32(img) / 255.
-        # bev.unwarp(canvas, (width, height), img)
+        img_alpha = img.copy()
 
+        y_bottom, y_top = warped.shape[0], warped.shape[0] // 2
+        if left is not None:
+            left = get_points(left, y_bottom, y_top)
+            left = np.floor(bev.unproject(left)).astype(np.int32)
+        if right is not None:
+            right = get_points(right, y_bottom, y_top)
+            right = np.floor(bev.unproject(right)).astype(np.int32)
 
+        # Only fill if we have valid tracks
+        if (left is not None) or (right is not None):
+            if (left is not None) and (right is not None):
+                all = np.vstack([left, np.flipud(right)])
+            elif left is not None:
+                all = left
+            else:
+                all = right
+            color = VALID_COLOR if (left_valid and right_valid) else \
+                (CACHED_COLOR if left_valid or right_valid else WARNING_COLOR)
+            alpha = 0.4 if left_valid and right_valid else 0.1
+            cv2.fillPoly(img_alpha, [all], color, lineType=cv2.LINE_AA)
+            img = cv2.addWeighted(img, (1 - alpha), img_alpha, alpha, 0)
+
+        # Draw the lane lines
+        if left is not None:
+            color = VALID_COLOR if left_valid else CACHED_COLOR
+            cv2.polylines(img, [left], False, color, 3, lineType=cv2.LINE_AA)
+        if right is not None:
+            color = VALID_COLOR if right_valid else CACHED_COLOR
+            cv2.polylines(img, [right], False, color, 3, lineType=cv2.LINE_AA)
 
         img = cv2.resize(img, (0, 0), fx=display_scale, fy=display_scale)
         cv2.imshow('edges', edges)
