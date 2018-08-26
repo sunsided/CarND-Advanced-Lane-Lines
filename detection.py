@@ -84,10 +84,12 @@ def main(args):
             break
         print('Processing frame {} ...'.format(int(cap.get(cv2.CAP_PROP_POS_FRAMES))))
 
+        # Undistort and transform to bird's eye view
         img, _ = cc.undistort(img, False)
         warped = bev.warp(img)
-
         warped_f = np.float32(warped) / 255
+
+        # Convert to grayscale and normalize OpenCV L*a*b* value ranges.
         lab = cv2.cvtColor(warped_f, cv2.COLOR_BGR2LAB)
         yellows = lab[..., 2] / 127
         yellows[yellows < 0.5] = 0
@@ -95,26 +97,49 @@ def main(args):
         gray = cv2.max(lab[..., 0] / 100, yellows)
         lab[..., 0] = gray * 100
 
+        # Preprocessing: Detect lane line pixel candidates
         warped_f = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
         warped = np.uint8(warped_f * 255)  # type: np.ndarray
-
         edges = detect_lane_pixels(warped, edg, swt, lcm) * roi_mask_hard
-        canvas = warped_f.copy()
 
+        # Detect the lane lines
+        canvas = warped_f.copy()
         results = detect_and_render_lanes(canvas, edges, state, mx, my, render_lanes=True, render_boxes=True)
         (left_valid, left_fit), (right_valid, right_fit) = results
 
+        # Prepare a image for alpha blending.
         img = np.float32(img) / 255.
         img_alpha = img.copy()
 
+        # We are tracking the bottom lane line points. By definition of the BEV transformation,
+        # the left line is supposed to be at x=100, while the right lane should be at x=200.
+        bottom_left, bottom_right = None, None
+
+        # We now obtain the lane lines and transform them to camera space.
         y_bottom, y_top = warped.shape[0], warped.shape[0] // 2
         left, right = None, None
         if left_fit is not None:
             left = get_points(left_fit, y_bottom, y_top)
+            bottom_left = left[0][0]
+            bottom_right = bottom_left + 100
             left = np.floor(bev.unproject(left)).astype(np.int32)
         if right_fit is not None:
             right = get_points(right_fit, y_bottom, y_top)
+            bottom_right = right[0][0]
+            bottom_left = bottom_right - 100 if bottom_left is None else bottom_left
             right = np.floor(bev.unproject(right)).astype(np.int32)
+
+        # By checking the lane line center point (which should be at x=150) we can determine
+        # the deviation of the car's center point from the lane's center.
+        # Since each half-lane is 50 pixels, we normalize by this.
+        if bottom_left is not None:
+            lane_center = (bottom_left + bottom_right) / 2
+            delta = 150 - lane_center
+            deviation_from_center = delta / 50
+            deviation_from_center_m = delta * mx
+        else:
+            deviation_from_center = None
+            deviation_from_center_m = None
 
         # Prepare the HUD
         hud_height = 64
@@ -185,12 +210,19 @@ def main(args):
                 curvature_hist = curvature_invalid
                 curvature_age = 0
 
-        text = 'Radius: {0:5.2f}m'.format(curvature_hist)
-        if not curvature_valid(curvature_hist):
-            text = 'Radius: disagreement'
-        elif curvature_hist == 0:
-            text = 'Radius: none'
+        # Display lane center deviation
+        text = 'Deviation from lane center: {0:.0f}% ({1:0.2}m)'.format(deviation_from_center * 100,
+                                                                        deviation_from_center_m) \
+            if deviation_from_center is not None else 'Position: unknown'
         cv2.putText(img, text, (4, 24), cv2.FONT_HERSHEY_DUPLEX, 0.75, (1, 1, 1), 1, cv2.LINE_AA)
+
+        # Display curvature
+        text = 'Curvature radius: {0:0.2f}m'.format(curvature_hist)
+        if not curvature_valid(curvature_hist):
+            text = 'Curvature radius: disagreement'
+        elif curvature_hist == 0:
+            text = 'Curvature radius: none'
+        cv2.putText(img, text, (4, 48), cv2.FONT_HERSHEY_DUPLEX, 0.75, (1, 1, 1), 1, cv2.LINE_AA)
 
         img = cv2.resize(img, (0, 0), fx=display_scale, fy=display_scale)
         cv2.imshow('edges', edges)
