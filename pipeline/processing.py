@@ -22,7 +22,8 @@ def render_rects(canvas: np.ndarray, rects: List[Tuple[int, int, int, int]], alp
 
 
 def detect_and_render_lane(canvas: np.ndarray, edges: np.ndarray, tracks: List[Track],
-                           offset_thresh: int, confidence_thresh: float, render_boxes: bool = True,
+                           offset_thresh: int, confidence_thresh: float,
+                           render_lanes: bool=False, render_boxes: bool = True,
                            cached: Optional[Track]=None) -> Tuple[bool, np.ndarray]:
     assert tracks is not None
     h, w = edges.shape[:2]
@@ -42,7 +43,7 @@ def detect_and_render_lane(canvas: np.ndarray, edges: np.ndarray, tracks: List[T
         if xs[0] < offset_thresh or xs[0] > (w - offset_thresh) or track.confidence < confidence_thresh:
             if render_boxes:
                 render_rects(canvas, track.rects, 0.25)
-            if cached is not None:
+            if cached is not None and render_lanes:
                 canvas = render_lane(canvas, cached.fit, highest_rect, cached_color)
             return False, canvas
         if render_boxes:
@@ -56,16 +57,17 @@ def detect_and_render_lane(canvas: np.ndarray, edges: np.ndarray, tracks: List[T
         valid = False
     if valid and validate_fit(edges, fit) is None:
         valid = False
-    if valid:
+    if valid and render_lanes:
         canvas = render_lane(canvas, fit, highest_rect)
-    elif cached is not None:
+    elif cached is not None and render_lanes:
         canvas = render_lane(canvas, cached.fit, highest_rect, cached_color)
     return valid, canvas
 
 
 def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetectionState, mx: float, my: float,
                             left_thresh: int = 50, right_thresh: int = 50, confidence_thresh: float = .3,
-                            box_width: int=30, box_height: int=10, degree: int=2, render_boxes: bool=False) \
+                            box_width: int=30, box_height: int=10, degree: int=2,
+                            render_lanes: bool=False, render_boxes: bool=False) \
         -> Tuple[Tuple[bool, bool], np.ndarray]:
     tracks = []
 
@@ -111,9 +113,11 @@ def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetec
 
     state.update_history(tracks)
     left_match, canvas = detect_and_render_lane(img, edges, state.tracks_left, left_thresh,
-                                                confidence_thresh, cached=left, render_boxes=render_boxes)
+                                                confidence_thresh, cached=left,
+                                                render_lanes=render_lanes, render_boxes=render_boxes)
     right_match, canvas = detect_and_render_lane(img, edges, state.tracks_right, right_thresh,
-                                                 confidence_thresh, cached=right, render_boxes=render_boxes)
+                                                 confidence_thresh, cached=right,
+                                                 render_lanes=render_lanes, render_boxes=render_boxes)
 
     if left_match or left_from_cache:
         should_age = not left_match and left_from_cache

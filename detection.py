@@ -89,15 +89,17 @@ def main(args):
         lab[..., 0] = gray * 100
 
         warped_f = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-        warped = np.uint8(warped_f * 255)
+        warped = np.uint8(warped_f * 255)  # type: np.ndarray
 
         edges = detect_lane_pixels(warped, edg, swt, lcm) * roi_mask_hard
         canvas = warped_f.copy()
 
-        matches, canvas = detect_and_render_lanes(canvas, edges, state, mx, my)
+        matches, canvas = detect_and_render_lanes(canvas, edges, state, mx, my, render_lanes=True, render_boxes=True)
 
         img = np.float32(img) / 255.
-        bev.unwarp(canvas, (width, height), img)
+        # bev.unwarp(canvas, (width, height), img)
+
+
 
         img = cv2.resize(img, (0, 0), fx=display_scale, fy=display_scale)
         cv2.imshow('edges', edges)
