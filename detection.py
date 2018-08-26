@@ -87,6 +87,8 @@ def main(args):
     curvature_age = 0
     curvature_max_age = 16
 
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 200.0)
+
     while True:
         t_start = datetime.now()
         ret, img = cap.read()

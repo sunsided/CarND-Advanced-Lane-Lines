@@ -201,10 +201,10 @@ def regress_lanes(mask: np.ndarray, k: int = 2,
     selected_tracks = []
     if detect_left:
         picks = sorted([t for t in tracks if t.side < 0], key=lambda x: -x.confidence)
-        selected_tracks.extend(picks[:int(np.ceil(k/2))])
+        selected_tracks.extend(picks[:1])
     if detect_right:
         picks = sorted([t for t in tracks if t.side > 0], key=lambda x: -x.confidence)
-        selected_tracks.extend(picks[:int(np.ceil(k/2))])
+        selected_tracks.extend(picks[:1])
 
     return selected_tracks
 
@@ -307,10 +307,14 @@ def validate_fit(img: np.ndarray, fit: Optional[Fit], lo: float = .05, hi: float
             xl = xl + x_centroid - box_hwidth
             xr = int(min(w - 1, xl + box_width))
 
-        rects.append((xl, yt, xr, yb))
-        supported.append(1. if lo <= support <= hi else 0)
+        local_support = 1. if lo <= support <= hi else 0
+        supported.append(local_support)
+        if local_support:
+            rects.append((xl, yt, xr, yb))
 
     support = float(np.mean(supported))
     if support < min_support:
         return None
+
+    assert len(rects) > 0
     return rects

@@ -5,7 +5,7 @@ LaneMatch = NamedTuple('LaneMatch', [('track', Optional[Track]), ('age', int)])
 
 
 class LaneDetectionState:
-    def __init__(self, max_age: int=10, max_history: int=5):
+    def __init__(self, max_age: int=10, max_history: int=10):
         self._left = LaneMatch(track=None, age=0)
         self._right = LaneMatch(track=None, age=0)
         self._tracks_left = []
@@ -75,12 +75,16 @@ class LaneDetectionState:
         """
         Ages the left track.
         """
+        if self._left.age < 0:
+            return
         self._left = LaneMatch(track=self._left.track, age=self._left.age + 1)
 
     def age_right(self):
         """
         Age the right track.
         """
+        if self._right.age < 0:
+            return
         self._right = LaneMatch(track=self._right.track, age=self._right.age + 1)
 
     def confirm_left(self, apply_aging: bool=False):

@@ -25,14 +25,20 @@ def render_rects(canvas: np.ndarray, rects: List[Tuple[int, int, int, int]], alp
     return canvas
 
 
-def detect_and_render_lane(canvas: np.ndarray, edges: np.ndarray, tracks: List[Track],
-                           offset_thresh: int, confidence_thresh: float,
-                           render_lanes: bool = False, render_boxes: bool = True,
-                           cached: Optional[Track] = None) -> Tuple[bool, Optional[Fit]]:
+def interpolate_and_render_lane(canvas: np.ndarray, edges: np.ndarray, tracks: List[Track],
+                                offset_thresh: int, confidence_thresh: float,
+                                render_lanes: bool = False, render_boxes: bool = True,
+                                cached: Optional[Track] = None,
+                                boxes_thresh: int=8) -> Tuple[bool, Optional[Fit]]:
     assert tracks is not None
     h, w = edges.shape[:2]
 
     # We pick the latest track for rendering the rectangles.
+    if len(tracks) == 0:
+        if cached is None:
+            return False, None
+        else:
+            tracks = [cached]
     track = tracks[-1]
     assert track is not None
 
@@ -43,12 +49,14 @@ def detect_and_render_lane(canvas: np.ndarray, edges: np.ndarray, tracks: List[T
         highest_rect = track.rects[-1][1]
         ys = np.linspace(h - 1, highest_rect, h - highest_rect)
         xs = np.polyval(track.fit, ys)
-        if xs[0] < offset_thresh or xs[0] > (w - offset_thresh) or track.confidence < confidence_thresh:
+        confidence_ok = track.confidence >= confidence_thresh
+        boxes_ok = len(track.rects) >= boxes_thresh
+        if xs[0] < offset_thresh or xs[0] > (w - offset_thresh) or not confidence_ok or not boxes_ok:
             if render_boxes:
                 render_rects(canvas, track.rects, 0.25)
             if cached is not None and render_lanes:
                 render_lane(canvas, cached.fit, highest_rect, CACHED_COLOR)
-            return False, cached.fit if cached is not None else None
+            return False, None
         if render_boxes:
             render_rects(canvas, track.rects, 1)
 
@@ -72,8 +80,9 @@ def detect_and_render_lane(canvas: np.ndarray, edges: np.ndarray, tracks: List[T
 
 
 def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetectionState, mx: float, my: float,
-                            left_thresh: int = 50, right_thresh: int = 50, confidence_thresh: float = .3,
+                            left_thresh: int = 50, right_thresh: int = 50, confidence_thresh: float = .5,
                             box_width: int = 30, box_height: int = 10, degree: int = 2,
+                            boxes_thresh: int=7,
                             render_lanes: bool = False, render_boxes: bool = False) \
         -> Tuple[Tuple[bool, Optional[Fit]], Tuple[bool, Optional[Fit]]]:
     tracks = []
@@ -112,8 +121,31 @@ def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetec
         else:
             print('Support too low on right line.')
 
+    # If we have a match from cache for the left lane line, validate it.
+    left_match, left_fit = False, None
+    if left_from_cache:
+        left_tracks = []
+        left_tracks.extend(state.tracks_left)
+        left_tracks.extend([t for t in tracks if t.side < 0])
+        left_match, left_fit = interpolate_and_render_lane(img, edges, left_tracks, left_thresh,
+                                                           confidence_thresh, cached=left,
+                                                           render_lanes=render_lanes, render_boxes=render_boxes)
+        left_from_cache = left_match
+
+    # Likewise, valide the right cache entry, if it exists.
+    right_match, right_fit = False, None
+    if right_from_cache:
+        right_tracks = []
+        right_tracks.extend(state.tracks_right)
+        right_tracks.extend([t for t in tracks if t.side > 0])
+        right_match, right_fit = interpolate_and_render_lane(img, edges, right_tracks, right_thresh,
+                                                             confidence_thresh, cached=right,
+                                                             render_lanes=render_lanes, render_boxes=render_boxes)
+        right_from_cache = right_match
+
+    # If a cache entry did not exist or didn't check out good, we re-start from scratch.
     if not left_from_cache or not right_from_cache:
-        new_tracks = regress_lanes(edges, k=2, degree=degree,
+        new_tracks = regress_lanes(edges, k=4, degree=degree,
                                    search_height=10, max_height=0.55,
                                    max_strikes=15, box_width=box_width, box_height=box_height, threshold=5,
                                    fit_weight=.1, centroid_weight=1, n_smooth=10,
@@ -122,20 +154,45 @@ def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetec
                                    detect_right=not right_from_cache)
         tracks.extend(new_tracks)
 
-    state.update_history(tracks)
-    left_match, left_fit = detect_and_render_lane(img, edges, state.tracks_left, left_thresh,
-                                                  confidence_thresh, cached=left,
-                                                  render_lanes=render_lanes, render_boxes=render_boxes)
-    right_match, right_fit = detect_and_render_lane(img, edges, state.tracks_right, right_thresh,
-                                                    confidence_thresh, cached=right,
-                                                    render_lanes=render_lanes, render_boxes=render_boxes)
+        if not left_from_cache:
+            left_tracks = []
+            left_tracks.extend(state.tracks_left)
+            left_tracks.extend([t for t in tracks if t.side < 0])
+            left_match, left_fit = interpolate_and_render_lane(img, edges, left_tracks, left_thresh,
+                                                               confidence_thresh, boxes_thresh=boxes_thresh,
+                                                               cached=left,
+                                                               render_lanes=render_lanes, render_boxes=render_boxes)
 
-    if (left_match or left_from_cache) and left_fit is not None:
-        should_age = not left_match and left_from_cache
-        state.confirm_left(should_age)
+        if not right_from_cache:
+            right_tracks = []
+            right_tracks.extend(state.tracks_right)
+            right_tracks.extend([t for t in tracks if t.side > 0])
+            right_match, right_fit = interpolate_and_render_lane(img, edges, right_tracks, right_thresh,
+                                                                 confidence_thresh, boxes_thresh=boxes_thresh,
+                                                                 cached=right,
+                                                                 render_lanes=render_lanes, render_boxes=render_boxes)
 
-    if (right_match or right_from_cache) and right_fit is not None:
-        should_age = not right_match and right_from_cache
-        state.confirm_right(should_age)
+    if not left_match:
+        tracks = [t for t in tracks if t.side != -1]
+    if not right_match:
+        tracks = [t for t in tracks if t.side != 1]
+
+    if len(tracks) > 0:
+        state.update_history(tracks)
+
+        if (left_match or left_from_cache) and left_fit is not None:
+            should_age = not left_match and left_from_cache
+            state.confirm_left(should_age)
+        else:
+            state.age_left()
+
+        if (right_match or right_from_cache) and right_fit is not None:
+            should_age = not right_match and right_from_cache
+            state.confirm_right(should_age)
+        else:
+            state.age_right()
+    else:
+        state.age_left()
+        state.age_right()
 
     return (left_match, left_fit), (right_match, right_fit)
