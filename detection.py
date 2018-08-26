@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 from datetime import datetime
 
-from pipeline import ImageSection, detect_and_render_lanes, VALID_COLOR, CACHED_COLOR, WARNING_COLOR
+from pipeline import ImageSection, detect_and_render_lanes, VALID_COLOR, CACHED_COLOR, WARNING_COLOR, curvature_radius
 from pipeline.preprocessing import detect_lane_pixels
 from pipeline.transform import *
 from pipeline.edges import *
@@ -69,6 +69,13 @@ def main(args):
     lcm.light_cutoff = .95
 
     state = LaneDetectionState()
+    curvature_invalid = float('inf')
+    curvature_hist = curvature_invalid
+    curvature_age = 0
+    curvature_max_age = 16
+
+    def curvature_valid(x) -> bool:
+        return not np.isinf(x)
 
     while True:
         t_start = datetime.now()
@@ -95,18 +102,26 @@ def main(args):
         canvas = warped_f.copy()
 
         results = detect_and_render_lanes(canvas, edges, state, mx, my, render_lanes=True, render_boxes=True)
-        (left_valid, left), (right_valid, right) = results
+        (left_valid, left_fit), (right_valid, right_fit) = results
 
         img = np.float32(img) / 255.
         img_alpha = img.copy()
 
         y_bottom, y_top = warped.shape[0], warped.shape[0] // 2
-        if left is not None:
-            left = get_points(left, y_bottom, y_top)
+        left, right = None, None
+        if left_fit is not None:
+            left = get_points(left_fit, y_bottom, y_top)
             left = np.floor(bev.unproject(left)).astype(np.int32)
-        if right is not None:
-            right = get_points(right, y_bottom, y_top)
+        if right_fit is not None:
+            right = get_points(right_fit, y_bottom, y_top)
             right = np.floor(bev.unproject(right)).astype(np.int32)
+
+        # Prepare the HUD
+        hud_height = 64
+        cv2.fillPoly(img, [np.array([[0, 0], [img.shape[1], 0],
+                                     [img.shape[1], hud_height], [0, hud_height]])], color=(.25, .25, .25))
+        img = cv2.addWeighted(img, .5, img_alpha, .5, 0)
+        img_alpha = img.copy()
 
         # Only fill if we have valid tracks
         if (left is not None) or (right is not None):
@@ -118,9 +133,9 @@ def main(args):
                 all = right
             color = VALID_COLOR if (left_valid and right_valid) else \
                 (CACHED_COLOR if left_valid or right_valid else WARNING_COLOR)
-            alpha = 0.4 if left_valid and right_valid else 0.1
+            measurement_alpha = 0.4 if left_valid and right_valid else 0.1
             cv2.fillPoly(img_alpha, [all], color, lineType=cv2.LINE_AA)
-            img = cv2.addWeighted(img, (1 - alpha), img_alpha, alpha, 0)
+            img = cv2.addWeighted(img, (1 - measurement_alpha), img_alpha, measurement_alpha, 0)
 
         # Draw the lane lines
         if left is not None:
@@ -129,6 +144,53 @@ def main(args):
         if right is not None:
             color = VALID_COLOR if right_valid else CACHED_COLOR
             cv2.polylines(img, [right], False, color, 3, lineType=cv2.LINE_AA)
+
+        # Render the HUD text
+        curvature = 0
+        if (left is not None) and (right is None):
+            cl_b = curvature_radius(left_fit, warped.shape[0], mx)
+            cl_t = curvature_radius(left_fit, 0, mx)
+            curvature = (cl_b + cl_t) / 2
+        elif (left is None) and (right is not None):
+            cr_b = curvature_radius(right_fit, warped.shape[0], mx)
+            cr_t = curvature_radius(right_fit, 0, mx)
+            curvature = (cr_b + cr_t) / 2
+        elif (left is not None) and (right is not None):
+            cl_b = curvature_radius(left_fit, warped.shape[0], mx)
+            cl_t = curvature_radius(left_fit, 0, mx)
+            cl = (cl_b + cl_t) / 2
+            cr_b = curvature_radius(right_fit, warped.shape[0], mx)
+            cr_t = curvature_radius(right_fit, 0, mx)
+            cr = (cr_b + cr_t) / 2
+            agreement = cl * cr > 0
+            measurement_alpha = 0.5
+            if agreement and cl < 0:
+                curvature = measurement_alpha * cl + (1 - measurement_alpha) * cr
+            elif agreement and cl > 0:
+                curvature = (1 - measurement_alpha) * cl + measurement_alpha * cr
+            else:
+                curvature = 0
+
+        # If the curvature suddenly flips signs from the previous value, drop it
+        if curvature * curvature_hist > 0 and curvature_valid(curvature_hist):
+            mix_alpha = 0.1
+            curvature_hist = mix_alpha * curvature + (1 - mix_alpha) * curvature_hist
+            curvature_age = 0
+        elif not curvature_valid(curvature_hist):
+            curvature_hist = curvature
+            curvature_age = 0
+        else:
+            curvature_age += 1
+            if curvature_age >= curvature_max_age:
+                curvature_hist = curvature_invalid
+                curvature_age = 0
+
+        text = 'Radius: {0:5.2f}m'.format(curvature_hist)
+        if not curvature_valid(curvature_hist):
+            text = 'Radius: disagreement'
+        elif curvature_hist == 0:
+            text = 'Radius: none'
+        cv2.putText(img, text, (4, 24), cv2.FONT_HERSHEY_DUPLEX, 0.75, (1, 1, 1), 1, cv2.LINE_AA)
 
         img = cv2.resize(img, (0, 0), fx=display_scale, fy=display_scale)
         cv2.imshow('edges', edges)
