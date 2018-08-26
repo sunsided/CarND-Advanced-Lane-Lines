@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 from typing import Optional
-from .swt import apply_swt, get_edges, get_gradients
+from pipeline.swt import apply_swt, get_edges, get_gradients
 
 
 class EdgeDetectionSWT:

@@ -170,7 +170,7 @@ def __main():
     # Let's run some tests.
     cv2.namedWindow('Images', cv2.WINDOW_NORMAL)
 
-    sample_path = os.path.join('..', 'test_images')
+    sample_path = os.path.join('..', '..', 'test_images')
     files = glob.glob(os.path.join(sample_path, '*.jpg'))
     files.extend(glob.glob(os.path.join(path, 'calibration*.jpg')))
 

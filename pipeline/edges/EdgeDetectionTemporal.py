@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 from typing import Optional
-from .non_line_suppression import non_line_suppression
+from pipeline.non_line_suppression import non_line_suppression
 
 
 class EdgeDetectionTemporal:

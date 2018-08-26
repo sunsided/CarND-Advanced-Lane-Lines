@@ -1,13 +1,16 @@
 import cv2
 import numpy as np
 from typing import Optional
-from .swt import swt_process_pixel
-from .non_line_suppression import non_line_suppression
+from pipeline.swt import swt_process_pixel
+from pipeline.non_line_suppression import non_line_suppression
 
 
-class EdgeDetectionConf:
+class EdgeDetectionNaive:
     """
-    Obtains edges for for further processing.
+    Obtains edges for for further processing by finding edges and then
+    sieving out those edges that do not have a corresponding counterpart
+    in a given distance. The result is locations where hi-lo-hi
+    crossings can be found.
     """
     def __init__(self, lane_width: int=4, kernel_width: int=11,
                  mask: Optional[np.ndarray]=None,
@@ -40,17 +43,41 @@ class EdgeDetectionConf:
         :return: The pre-filtered image.
         """
         lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB) if not is_lab else img
-        li = lab[..., 0]
+        li = cv2.blur(lab[..., 0], (5, 5))
 
-        # Suppress non-lanes. In essence, this is an edge detection kernel that attempts
-        # to enforce large areas of uniform lightness, followed by a confined lightness bump.
-        # This both serves the purpose of detecting edges and suppressing uninteresting candidates.
-        filtered = cv2.filter2D(np.float32(li) / 255., cv2.CV_32F, self._kernel)
-        filtered[filtered < self.filter_threshold] = 0
-        filtered = np.power(filtered, 1/4)
-        if self._roi_mask is not None:
-            filtered *= self._roi_mask
-        return filtered
+        canny_8 = cv2.Canny(li, 16, 32) * self._roi_mask
+        output = np.zeros(canny_8.shape[:2], np.float32)
+
+        ys, xs = np.nonzero(canny_8)
+        h, w = canny_8.shape[:2]
+        max_width = 25
+        min_width = 3
+        threshold = 0.95
+        for i in range(len(ys)):
+            x, y = xs[i], ys[i]
+            if x == 0 or (x + 1) == w:
+                continue
+            vl = li[y, x-1]
+            vc = li[y, x+1]
+            if vc == 0:
+                continue
+            left_ratio = vl / vc
+            if left_ratio > threshold:
+                continue
+            for x2 in range(x+2, min(x + max_width, w - 2)):
+                if canny_8[y, x2] == 0:
+                    continue
+                if x + min_width >= x2:
+                    continue
+                vr = li[y, x2 + 1]
+                right_ratio = vr / vc
+                if right_ratio < threshold:
+                    output[y, x] = left_ratio
+                    output[y, x2] = right_ratio
+                    output[y, (x + x2) // 2] = (left_ratio + right_ratio) / 2
+                break
+
+        return output
 
     def detect(self, img: np.ndarray, is_lab: bool=False) -> np.ndarray:
         """

@@ -1,9 +1,8 @@
 import cv2
 import numpy as np
-from typing import NamedTuple, Optional
+from typing import Optional
 
-Point = NamedTuple('Point', [('x', float), ('y', float)])
-Size = NamedTuple('Size', [('width', int), ('height', int)])
+from .types import Point, Size
 
 
 class ImageSection:
@@ -115,10 +114,10 @@ class BirdsEyeView:
 
 def __main():
     import os
-    from CameraCalibration import CameraCalibration
+    from .CameraCalibration import CameraCalibration
 
-    cc = CameraCalibration.from_pickle(os.path.join('..', 'calibration.pkl'))
-    path = os.path.join('..', 'test_images', 'straight_lines1.jpg')
+    cc = CameraCalibration.from_pickle(os.path.join('..', '..', 'calibration.pkl'))
+    path = os.path.join('..', '..', 'test_images', 'straight_lines1.jpg')
     img = cv2.imread(path)
     assert img is not None
 
