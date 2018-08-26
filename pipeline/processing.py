@@ -81,7 +81,7 @@ def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetec
     left = state.left
     left_from_cache = False
 
-    if left is not None:
+    if left is not None and left.confidence > 0:
         rects = validate_fit(edges, left.fit, box_width=box_width, box_height=box_height)
         if rects is not None:
             left = create_track(-1, rects, xs=None, ys=None, mx=mx, degree=degree)
@@ -89,14 +89,16 @@ def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetec
                 left = recenter_rects(left, rects)
                 tracks.append(left)
                 left_from_cache = True
-
-    if not left_from_cache:
-        state.age_left()
+                print('Selecting left line from cache.')
+            else:
+                print('Confidence too low on cached left line.')
+        else:
+            print('Support too low on left line.')
 
     right = state.right
     right_from_cache = False
 
-    if right is not None:
+    if right is not None and right.confidence > 0:
         rects = validate_fit(edges, right.fit, box_width=box_width, box_height=box_height)
         if rects is not None:
             right = create_track(1, rects, xs=None, ys=None, mx=mx, degree=degree)
@@ -104,15 +106,17 @@ def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetec
                 right = recenter_rects(right, rects)
                 tracks.append(right)
                 right_from_cache = True
-
-    if not right_from_cache:
-        state.age_right()
+                print('Selecting right line from cache.')
+            else:
+                print('Confidence too low on cached right line.')
+        else:
+            print('Support too low on right line.')
 
     if not left_from_cache or not right_from_cache:
         new_tracks = regress_lanes(edges, k=2, degree=degree,
                                    search_height=10, max_height=0.55,
                                    max_strikes=15, box_width=box_width, box_height=box_height, threshold=5,
-                                   fit_weight=2, centroid_weight=1, n_smooth=10,
+                                   fit_weight=.1, centroid_weight=1, n_smooth=10,
                                    mx=mx, my=my,
                                    detect_left=not left_from_cache,
                                    detect_right=not right_from_cache)
@@ -126,11 +130,11 @@ def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetec
                                                     confidence_thresh, cached=right,
                                                     render_lanes=render_lanes, render_boxes=render_boxes)
 
-    if left_match or left_from_cache and left_fit is not None:
+    if (left_match or left_from_cache) and left_fit is not None:
         should_age = not left_match and left_from_cache
         state.confirm_left(should_age)
 
-    if right_match or right_from_cache and right_fit is not None:
+    if (right_match or right_from_cache) and right_fit is not None:
         should_age = not right_match and right_from_cache
         state.confirm_right(should_age)
 

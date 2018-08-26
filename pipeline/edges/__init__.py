@@ -1,4 +1,4 @@
-from .EdgeDetectionConv import EdgeDetectionConf
+from .EdgeDetectionConv import EdgeDetectionConv
 from .EdgeDetectionNaive import EdgeDetectionNaive
 from .EdgeDetectionSWT import EdgeDetectionSWT
 from .EdgeDetectionTemporal import EdgeDetectionTemporal

@@ -192,11 +192,25 @@ def regress_lanes(mask: np.ndarray, k: int = 2,
         side = -1 if is_left(m) else (1 if is_right(m) else 0)
         if side == 0:
             continue
-        tracks.append(create_track(side, rects, xs, ys, mx, degree))
-    return tracks
+        track = create_track(side, rects, xs, ys, mx, degree)
+        if track.confidence == 0:
+            continue
+        tracks.append(track)
+
+    # Keep only the n/2 best tracks from the left and right side.
+    selected_tracks = []
+    if detect_left:
+        picks = sorted([t for t in tracks if t.side < 0], key=lambda x: -x.confidence)
+        selected_tracks.extend(picks[:int(np.ceil(k/2))])
+    if detect_right:
+        picks = sorted([t for t in tracks if t.side > 0], key=lambda x: -x.confidence)
+        selected_tracks.extend(picks[:int(np.ceil(k/2))])
+
+    return selected_tracks
 
 
-def create_track(side: int, rects: List[Tuple[int, int, int, int]], xs: Optional[List[int]], ys: Optional[List[int]], mx: float, degree: int=2) -> Track:
+def create_track(side: int, rects: List[Tuple[int, int, int, int]], xs: Optional[List[int]], ys: Optional[List[int]], mx: float, degree: int=2,
+                 allowed_deviation: float=5, alpha=0.09) -> Track:
     if xs is None or len(xs) == 0:
         xs = [(r[2] + r[0]) // 2 for r in rects]
     if ys is None or len(xs) == 0:
@@ -205,7 +219,7 @@ def create_track(side: int, rects: List[Tuple[int, int, int, int]], xs: Optional
     fit = np.polyfit(ys, xs, deg=degree)
     xs_ = np.polyval(fit, ys)
     rmse = np.mean(np.array((xs - xs_) ** 2))
-    confidence = max(0, 1 - np.exp(rmse - 5))
+    confidence = min(1, np.exp(-alpha*(rmse - allowed_deviation)))
 
     # Measure the curvature_radius close to the vehicle (at the bottom of the image)
     y_eval = np.max(ys)
@@ -238,7 +252,7 @@ def blend_tracks(tracks: List[Track]) -> Optional[Fit]:
     confidences = np.array([t.confidence for t in valid_tracks])
     sqe = np.array([(1 - t.curvature_radius / curvature) ** 2 for t in valid_tracks])
     error_coeffs = np.exp(-sqe)
-    age_coeffs = np.linspace(.4, 1., len(error_coeffs))
+    age_coeffs = np.linspace(.4, 1., len(error_coeffs)) ** 2
     mask = np.ones_like(error_coeffs)
     mask[error_coeffs < 0.6] = 0
     norm = np.sum(error_coeffs * mask * confidences * age_coeffs)
@@ -260,7 +274,7 @@ def recenter_rects(track: Track, rects: List[Tuple[int, int, int, int]]) -> Trac
 
 def validate_fit(img: np.ndarray, fit: Optional[Fit], lo: float = .05, hi: float = .8,
                  box_width: int = 75, box_height: int = 40,
-                 min_support: float = .25) -> Optional[List[Tuple[int, int, int, int]]]:
+                 min_support: float = .6) -> Optional[List[Tuple[int, int, int, int]]]:
     if fit is None:
         return None
     h, w = img.shape[:2]
@@ -294,7 +308,7 @@ def validate_fit(img: np.ndarray, fit: Optional[Fit], lo: float = .05, hi: float
             xr = int(min(w - 1, xl + box_width))
 
         rects.append((xl, yt, xr, yb))
-        supported.append(1. if lo < support < hi else 0)
+        supported.append(1. if lo <= support <= hi else 0)
 
     support = float(np.mean(supported))
     if support < min_support:

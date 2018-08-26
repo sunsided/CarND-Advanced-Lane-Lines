@@ -8,7 +8,8 @@ import cv2
 import numpy as np
 from datetime import datetime
 
-from pipeline import ImageSection, detect_and_render_lanes, VALID_COLOR, CACHED_COLOR, WARNING_COLOR, curvature_radius
+from pipeline import ImageSection, detect_and_render_lanes, VALID_COLOR, CACHED_COLOR, WARNING_COLOR, curvature_radius, \
+    CURVATURE_INVALID, curvature_valid
 from pipeline.preprocessing import detect_lane_pixels
 from pipeline.transform import *
 from pipeline.edges import *
@@ -68,8 +69,13 @@ def main(args):
     roi_mask_hard = build_roi_mask(10)
 
     edg = EdgeDetectionNaive(detect_lines=False, mask=roi_mask)
+    edc = EdgeDetectionConv(detect_lines=False, mask=roi_mask)
     swt = EdgeDetectionSWT(mask=roi_mask, max_length=8)
     edt = EdgeDetectionTemporal(mask=roi_mask, detect_lines=False)
+
+    edg_primary = edc
+    edg_secondary = swt
+    edg_threshold = 0.5
 
     lcm = LaneColorMasking(luminance_kernel_width=33)
     lcm.detect_lines = False
@@ -77,13 +83,9 @@ def main(args):
     lcm.light_cutoff = .95
 
     state = LaneDetectionState()
-    curvature_invalid = float('inf')
-    curvature_hist = curvature_invalid
+    curvature_hist = CURVATURE_INVALID
     curvature_age = 0
     curvature_max_age = 16
-
-    def curvature_valid(x) -> bool:
-        return not np.isinf(x)
 
     while True:
         t_start = datetime.now()
@@ -108,7 +110,7 @@ def main(args):
         # Preprocessing: Detect lane line pixel candidates
         warped_f = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
         warped = np.uint8(warped_f * 255)  # type: np.ndarray
-        edges = detect_lane_pixels(warped, edg, swt, lcm) * roi_mask_hard
+        edges = detect_lane_pixels(warped, edg_primary, edg_secondary, lcm, edg_threshold) * roi_mask_hard
 
         # Detect the lane lines
         canvas = warped_f.copy()
@@ -215,7 +217,7 @@ def main(args):
         else:
             curvature_age += 1
             if curvature_age >= curvature_max_age:
-                curvature_hist = curvature_invalid
+                curvature_hist = CURVATURE_INVALID
                 curvature_age = 0
 
         # Display lane center deviation

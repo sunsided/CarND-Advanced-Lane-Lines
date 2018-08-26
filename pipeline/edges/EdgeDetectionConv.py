@@ -5,7 +5,7 @@ from pipeline.swt import swt_process_pixel
 from pipeline.non_line_suppression import non_line_suppression
 
 
-class EdgeDetectionConf:
+class EdgeDetectionConv:
     """
     Obtains edges for for further processing.
     """

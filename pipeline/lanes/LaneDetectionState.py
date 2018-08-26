@@ -5,7 +5,7 @@ LaneMatch = NamedTuple('LaneMatch', [('track', Optional[Track]), ('age', int)])
 
 
 class LaneDetectionState:
-    def __init__(self, max_age: int=10, max_history: int=15):
+    def __init__(self, max_age: int=10, max_history: int=5):
         self._left = LaneMatch(track=None, age=0)
         self._right = LaneMatch(track=None, age=0)
         self._tracks_left = []
@@ -38,7 +38,10 @@ class LaneDetectionState:
         if self._left.age >= self._max_age:
             self._left = LaneMatch(track=None, age=0)
             return None
-        return self._left.track
+        track = self._left.track
+        if track is not None:
+            assert track.confidence > 0
+        return track
 
     @property
     def right(self) -> Optional[Track]:
@@ -49,7 +52,10 @@ class LaneDetectionState:
         if self._right.age >= self._max_age:
             self._right = LaneMatch(track=None, age=0)
             return None
-        return self._right.track
+        track = self._right.track
+        if track is not None:
+            assert track.confidence > 0
+        return track
 
     def set_left(self, track: Track):
         """
@@ -82,14 +88,22 @@ class LaneDetectionState:
         Confirms the latest left track from history.
         """
         if len(self._tracks_left) > 0:
-            self._left = LaneMatch(track=self._tracks_left[-1], age=0 if not apply_aging else self._left.age + 1)
+            track = self._tracks_left[-1]
+            if track.confidence == 0:
+                print('Not confirming left track: Confidence is zero.')
+                return
+            self._left = LaneMatch(track=track, age=0 if not apply_aging else self._left.age + 1)
 
     def confirm_right(self, apply_aging: bool=False):
         """
         Confirms the latest right track from history.
         """
         if len(self._tracks_right) > 0:
-            self._right = LaneMatch(track=self._tracks_right[-1], age=0 if not apply_aging else self._right.age + 1)
+            track = self._tracks_right[-1]
+            if track.confidence == 0:
+                print('Not confirming left track: Confidence is zero.')
+                return
+            self._right = LaneMatch(track=track, age=0 if not apply_aging else self._right.age + 1)
 
     def update_history(self, tracks: List[Track]):
         """

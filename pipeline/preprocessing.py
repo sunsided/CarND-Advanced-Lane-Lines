@@ -5,9 +5,10 @@ from typing import Optional, Union
 from pipeline.edges import *
 
 
-def detect_lane_pixels(frame: np.ndarray, edg: Optional[Union[EdgeDetectionConf, EdgeDetectionNaive]],
+def detect_lane_pixels(frame: np.ndarray, edg: Optional[Union[EdgeDetectionConv, EdgeDetectionNaive]],
                        tmp: Optional[Union[EdgeDetectionTemporal, EdgeDetectionSWT]],
-                       lcm: Optional[LaneColorMasking]) -> np.ndarray:
+                       lcm: Optional[LaneColorMasking],
+                       threshold: float=.25) -> np.ndarray:
     lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
 
     mask_sum = np.ones(lab.shape[:2], np.float32)
@@ -29,4 +30,6 @@ def detect_lane_pixels(frame: np.ndarray, edg: Optional[Union[EdgeDetectionConf,
         mask_sum += edges_temporal * mask
 
     scaled = (mask_sum - mask_sum.min()) / (mask_sum.max() - mask_sum.min())
+
+    scaled[scaled < threshold] = 0
     return scaled
