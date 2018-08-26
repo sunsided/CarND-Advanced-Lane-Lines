@@ -106,10 +106,19 @@ class BirdsEyeView:
         Un-warps an image from bird's eye view.
         :param img: The image to unwarp
         :param size: The target image size
+        :param dst: The destination image to draw onto.
         :return: The unwarped image.
         """
         return cv2.warpPerspective(img, self._iM, size, dst=dst,
                                    borderMode=cv2.BORDER_TRANSPARENT if dst is not None else cv2.BORDER_CONSTANT)
+
+    def unproject(self, pts: np.ndarray) -> np.ndarray:
+        """
+        Reprojects points from warped space into unwarped space.
+        :param pts: The points to project[
+        :return: The points in unwarped space.
+        """
+        return cv2.perspectiveTransform(pts.reshape((-1, 1, 2)), self._iM.astype(np.float32))
 
 
 def __main():
