@@ -23,6 +23,7 @@ def main(args):
         return
 
     fps = cap.get(cv2.CAP_PROP_FPS)
+    num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -75,7 +76,7 @@ def main(args):
 
     edg_primary = edc
     edg_secondary = swt
-    edg_threshold = 0.5
+    edg_threshold = 0.3
 
     lcm = LaneColorMasking(luminance_kernel_width=33)
     lcm.detect_lines = False
@@ -87,7 +88,8 @@ def main(args):
     curvature_age = 0
     curvature_max_age = 16
 
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 200.0)
+    seek_to = max(0, min(num_frames - 1, args.seek))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, seek_to)
 
     while True:
         t_start = datetime.now()
@@ -270,6 +272,8 @@ def parse_args():
                    help='The video file to process.')
     v.add_argument('-w', '--write', dest='write', default=None,
                    help='Writes an output video file')
+    v.add_argument('-s', '--seek', dest='seek', default=0, type=int,
+                   help='The video frame to seek to')
     args = parser.parse_args()
     if not os.path.exists(args.file):
         parser.error('The specified video {} could not be found.'.format(args.file))
