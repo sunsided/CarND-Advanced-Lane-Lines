@@ -2,21 +2,26 @@
 Runs the actual lane line detection on the specified video.
 """
 
+import logging
 import argparse
 import os
 import cv2
 import numpy as np
 from datetime import datetime
 
-from pipeline import ImageSection, detect_and_render_lanes, VALID_COLOR, CACHED_COLOR, WARNING_COLOR, curvature_radius, \
-    CURVATURE_INVALID, curvature_valid
+from pipeline import ImageSection, curvature_radius, CURVATURE_INVALID, curvature_valid
 from pipeline.preprocessing import detect_lane_pixels
 from pipeline.transform import *
 from pipeline.edges import *
 from pipeline.lanes import *
 
 
+log = logging.getLogger(__name__)
+
+
 def main(args):
+    logging.basicConfig(level=logging.DEBUG)
+
     cap = cv2.VideoCapture(args.file)
     if not cap:
         print('Failed reading video file.')
@@ -63,9 +68,6 @@ def main(args):
                        section_width=3.6576,  # one lane width in meters
                        section_height=2 * 13.8826)  # two dash distances in meters
 
-    mx = bev.units_per_pixel_x
-    my = bev.units_per_pixel_y
-
     roi_mask = build_roi_mask()
     roi_mask_hard = build_roi_mask(10)
 
@@ -83,7 +85,11 @@ def main(args):
     lcm.blue_threshold = 250
     lcm.light_cutoff = .95
 
-    state = LaneDetectionState()
+    params = LaneDetectionParams(mx=bev.units_per_pixel_x, my=bev.units_per_pixel_y,
+                                 render_boxes=True, render_lanes=True)
+    lane_detection = LaneDetection(params)
+    lanes = lane_detection.lanes
+
     curvature_hist = CURVATURE_INVALID
     curvature_age = 0
     curvature_max_age = 16
@@ -96,7 +102,7 @@ def main(args):
         ret, img = cap.read()
         if not ret:
             break
-        print('Processing frame {} ...'.format(int(cap.get(cv2.CAP_PROP_POS_FRAMES))))
+        log.info('Processing frame {} ...'.format(int(cap.get(cv2.CAP_PROP_POS_FRAMES))))
 
         # Undistort and transform to bird's eye view
         img, _ = cc.undistort(img, False)
@@ -118,8 +124,13 @@ def main(args):
 
         # Detect the lane lines
         canvas = warped_f.copy()
-        results = detect_and_render_lanes(canvas, edges, state, mx, my, render_lanes=True, render_boxes=True)
-        (left_valid, left_fit), (right_valid, right_fit) = results
+        lane_detection.detect_and_render_lanes(canvas, edges)
+
+        left_valid = lanes.left.track.valid
+        left_fit = lanes.left.track.fit
+
+        right_valid = lanes.right.track.valid
+        right_fit = lanes.right.track.fit
 
         # Prepare a image for alpha blending.
         img = np.float32(img) / 255.
@@ -150,7 +161,7 @@ def main(args):
             lane_center = (bottom_left + bottom_right) / 2
             delta = 150 - lane_center
             deviation_from_center = delta / 50
-            deviation_from_center_m = delta * mx
+            deviation_from_center_m = delta * params.mx
         else:
             deviation_from_center = None
             deviation_from_center_m = None
@@ -170,36 +181,36 @@ def main(args):
                 all = left
             else:
                 all = right
-            color = VALID_COLOR if (left_valid and right_valid) else \
-                (CACHED_COLOR if left_valid or right_valid else WARNING_COLOR)
+            color = LaneColor.Valid if (left_valid and right_valid) else \
+                (LaneColor.Cached if left_valid or right_valid else LaneColor.Warning)
             measurement_alpha = 0.4 if left_valid and right_valid else 0.1
-            cv2.fillPoly(img_alpha, [all], color, lineType=cv2.LINE_AA)
+            cv2.fillPoly(img_alpha, [all], color.value, lineType=cv2.LINE_AA)
             img = cv2.addWeighted(img, (1 - measurement_alpha), img_alpha, measurement_alpha, 0)
 
         # Draw the lane lines
         if left is not None:
-            color = VALID_COLOR if left_valid else CACHED_COLOR
-            cv2.polylines(img, [left], False, color, 3, lineType=cv2.LINE_AA)
+            color = LaneColor.Valid if left_valid else LaneColor.Cached
+            cv2.polylines(img, [left], False, color.value, 3, lineType=cv2.LINE_AA)
         if right is not None:
-            color = VALID_COLOR if right_valid else CACHED_COLOR
-            cv2.polylines(img, [right], False, color, 3, lineType=cv2.LINE_AA)
+            color = LaneColor.Valid if right_valid else LaneColor.Cached
+            cv2.polylines(img, [right], False, color.value, 3, lineType=cv2.LINE_AA)
 
         # Render the HUD text
         curvature = 0
         if (left is not None) and (right is None):
-            cl_b = curvature_radius(left_fit, warped.shape[0], mx)
-            cl_t = curvature_radius(left_fit, 0, mx)
+            cl_b = curvature_radius(left_fit, warped.shape[0], params.mx)
+            cl_t = curvature_radius(left_fit, 0, params.mx)
             curvature = (cl_b + cl_t) / 2
         elif (left is None) and (right is not None):
-            cr_b = curvature_radius(right_fit, warped.shape[0], mx)
-            cr_t = curvature_radius(right_fit, 0, mx)
+            cr_b = curvature_radius(right_fit, warped.shape[0], params.mx)
+            cr_t = curvature_radius(right_fit, 0, params.mx)
             curvature = (cr_b + cr_t) / 2
         elif (left is not None) and (right is not None):
-            cl_b = curvature_radius(left_fit, warped.shape[0], mx)
-            cl_t = curvature_radius(left_fit, 0, mx)
+            cl_b = curvature_radius(left_fit, warped.shape[0], params.mx)
+            cl_t = curvature_radius(left_fit, 0, params.mx)
             cl = (cl_b + cl_t) / 2
-            cr_b = curvature_radius(right_fit, warped.shape[0], mx)
-            cr_t = curvature_radius(right_fit, 0, mx)
+            cr_b = curvature_radius(right_fit, warped.shape[0], params.mx)
+            cr_t = curvature_radius(right_fit, 0, params.mx)
             cr = (cr_b + cr_t) / 2
             agreement = cl * cr > 0
             measurement_alpha = 0.5
@@ -211,7 +222,7 @@ def main(args):
                 curvature = 0
 
         # If the curvature suddenly flips signs from the previous value, drop it
-        if curvature * curvature_hist > 0 and curvature_valid(curvature_hist):
+        if curvature_valid(curvature_hist) and (curvature * curvature_hist > 0):
             mix_alpha = 0.1
             curvature_hist = mix_alpha * curvature + (1 - mix_alpha) * curvature_hist
             curvature_age = 0

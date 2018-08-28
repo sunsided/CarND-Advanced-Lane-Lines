@@ -1,28 +1,12 @@
 import cv2
 import numpy as np
-from typing import Optional, List, Tuple
-from pipeline import LaneDetectionState, validate_fit, create_track, recenter_rects, regress_lanes, Track, Fit, \
+from typing import Optional, List, Tuple, NamedTuple
+from pipeline import Lanes, validate_fit, create_track, recenter_rects, regress_lanes, Track, Fit, \
     blend_tracks
 
 VALID_COLOR = (1, 0.5, 0.1)
 CACHED_COLOR = (0.75, 0.1, 1)
 WARNING_COLOR = (0.05, 0.1, 1)
-
-
-def render_lane(canvas: np.ndarray, fit: Fit, highest_rect: Optional[float] = None, color=VALID_COLOR) -> np.ndarray:
-    h, w = canvas.shape[:2]
-    highest_rect = min(h // 2, highest_rect) if highest_rect is not None else h // 2
-    ys = np.linspace(h - 1, highest_rect, h - highest_rect)
-    xs = np.polyval(fit, ys)
-    pts = np.int32([(x, y) for (x, y) in zip(xs, ys)])
-    cv2.polylines(canvas, [pts], False, color=color, thickness=4, lineType=cv2.LINE_AA)
-    return canvas
-
-
-def render_rects(canvas: np.ndarray, rects: List[Tuple[int, int, int, int]], alpha: float) -> np.ndarray:
-    for rect in rects:
-        cv2.rectangle(canvas, rect[:2], rect[2:], color=(0, 0, alpha), thickness=1)
-    return canvas
 
 
 def interpolate_and_render_lane(canvas: np.ndarray, edges: np.ndarray, tracks: List[Track],
@@ -88,7 +72,8 @@ def interpolate_and_render_lane(canvas: np.ndarray, edges: np.ndarray, tracks: L
     return False, None
 
 
-def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetectionState, mx: float, my: float,
+
+def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: Lanes, mx: float, my: float,
                             left_thresh: int = 50, right_thresh: int = 50,
                             confidence_thresh: float = .5,
                             confidence_thresh_cached: float = .5,
@@ -98,8 +83,10 @@ def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetec
         -> Tuple[Tuple[bool, Optional[Fit]], Tuple[bool, Optional[Fit]]]:
     tracks = []
 
-    left = state.left
-    left_from_cache = False
+    left = state.left.track
+
+
+
 
     if left is not None and left.confidence > 0:
         rects = validate_fit(edges, left.fit, box_width=box_width, box_height=box_height, min_support=.3)
@@ -165,14 +152,17 @@ def detect_and_render_lanes(img: np.ndarray, edges: np.ndarray, state: LaneDetec
 
     # If a cache entry did not exist or didn't check out good, we re-start from scratch.
     if not left_from_cache or not right_from_cache:
-        new_tracks = regress_lanes(edges, k=4, degree=degree,
+        new_tracks = regress_lanes(edges, degree=degree,
                                    search_height=10, max_height=0.8,
                                    max_strikes=15, box_width=box_width, box_height=box_height, threshold=5,
                                    fit_weight=.1, centroid_weight=1, n_smooth=10,
                                    mx=mx, my=my,
                                    detect_left=not left_from_cache,
                                    detect_right=not right_from_cache)
-        tracks.extend(new_tracks)
+        if new_tracks[0] is not None:
+            tracks.append(new_tracks[0])
+        if new_tracks[1] is not None:
+            tracks.append(new_tracks[1])
 
         if not left_from_cache:
             print('[!] Verifying left line from search.')
