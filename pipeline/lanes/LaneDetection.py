@@ -29,15 +29,23 @@ class LaneDetection:
         log.info('Track ages: {}, {}'.format(lanes.left.age, lanes.right.age))
         log.info('History sizes: {}, {}'.format(len(lanes.left.history), len(lanes.right.history)))
 
+        # Obtain the lines from cache
+        left_track = self._find_track_cached(lanes.left.track, TrackType.Left, edges)
+        right_track = self._find_track_cached(lanes.right.track, TrackType.Right, edges)
+
         # Obtain the histogram for seed position detection.
-        histogram = self._build_histogram(edges)
+        histogram = None
+        if left_track is None or right_track is None:
+            histogram = self._build_histogram(edges)
 
         # Search the left line
-        left_track = self._find_track(TrackType.Left, self._is_left, edges, histogram)
+        if left_track is None:
+            left_track = self._find_track(TrackType.Left, self._is_left, edges, histogram)
         print(left_track)
 
         # Search the right line
-        right_track = self._find_track(TrackType.Right, self._is_right, edges, histogram)
+        if right_track is None:
+            right_track = self._find_track(TrackType.Right, self._is_right, edges, histogram)
         print(right_track)
 
         if self._params.render_boxes:
@@ -55,15 +63,12 @@ class LaneDetection:
         if right_track.valid:
             lanes.right.append(right_track)
 
-    def _use_historical_track(self, img: np.ndarray, edges: np.ndarray, track: Optional[Track]):
+    def _find_track_cached(self, track: Optional[Track], side: TrackType, edges: np.ndarray):
         if track is None:
             return None
-
         rects = self._validate_fit(edges, track.fit)
-        if rects is None:
-            return None
-
-        # TODO: Evaluate track from history
+        if rects is not None:
+            return self._create_track(side, rects, None, None, rects_valid=[True] * len(rects))
         return None
 
     def _find_track(self, side: TrackType, sieve: SeedFilter, edges: np.ndarray, histogram: SeedHistogram):
@@ -73,7 +78,7 @@ class LaneDetection:
             return self._invalid_track(side)
         log.debug('Seed for {} at x={}.'.format(side, histogram.pos[0]))
         rects, xs, ys, rects_valid = self._search_line(edges, histogram.pos[0])
-        return self._create_track(side, rects, xs, ys, self._params.mx, rects_valid=rects_valid)
+        return self._create_track(side, rects, xs, ys, rects_valid=rects_valid)
 
     def _validate_fit(self, edges: np.ndarray, fit: Fit) -> Optional[Rects]:
         assert fit is not None
@@ -295,10 +300,11 @@ class LaneDetection:
                      rects=[], valid=False, rects_valid=[])
 
     def _create_track(self, side: TrackType, rects: Rects,
-                      xs: Optional[List[int]], ys: Optional[List[int]], mx: float,
+                      xs: Optional[List[int]], ys: Optional[List[int]],
                       rects_valid: List[bool]) -> Track:
         alpha = self._params.fit_quality_decay
         beta = self._params.fit_quality_allowed_deviation
+        mx = self._params.mx
 
         suppress_first = 1
         min_boxes = self._params.boxes_thresh + suppress_first
