@@ -35,7 +35,7 @@ class EdgeDetectionTemplateMatching(EdgeDetectionBase):
         """
         gray = img
 
-        gray = cv2.GaussianBlur(gray, (9, 9), 0)
+        gray = cv2.GaussianBlur(gray, (3, 3), 0)
         mode = self._mode
 
         def process(template):
@@ -54,9 +54,10 @@ class EdgeDetectionTemplateMatching(EdgeDetectionBase):
         neg_sum = np.zeros_like(gray)
         for result in neg_matched:
             neg_sum[8:745 + 8, 8:285 + 8] += result
-            neg_sum /= len(self._negatives)
+        neg_sum /= len(self._negatives)
 
         mask = (1 - neg_sum) * pos_sum
+
         mask[mask < 0] = 0
         mask = cv2.normalize(mask, 1, cv2.NORM_MINMAX)
 

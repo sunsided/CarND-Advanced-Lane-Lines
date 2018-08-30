@@ -84,8 +84,8 @@ def main(args):
     edt = EdgeDetectionTemporal(mask=roi_mask, detect_lines=False)
     edm = EdgeDetectionTemplateMatching(path='templates', mask=roi_mask)
 
-    edg_fun = detect_lane_pixels
-    edg_primary = edc
+    edg_fun = detect_lane_pixels_2
+    edg_primary = None  # edc
     edg_secondary = edm
     edg_threshold = 0.5
     edg_lcm = None  # type: Optional[LaneColorMasking]
@@ -116,10 +116,9 @@ def main(args):
 
         # Convert to grayscale and normalize OpenCV L*a*b* value ranges.
         gray, lab = lab_enhance_yellow(warped_f)
+        warped_f = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
         # Preprocessing: Detect lane line pixel candidates
-        warped_f = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-        warped = np.uint8(warped_f * 255)  # type: np.ndarray
         edges = edg_fun(lab, gray, edg_primary, edg_secondary, edg_lcm, edg_threshold) * roi_mask_hard
 
         # Detect the lane lines

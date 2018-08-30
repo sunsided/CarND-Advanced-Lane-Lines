@@ -6,7 +6,7 @@ from pipeline.edges import *
 
 
 def lab_enhance_yellow(img: np.ndarray, normalize: bool=False) -> Tuple[np.ndarray, np.ndarray]:
-    img = np.float32(img) / 255 if normalize else img
+    img = np.float32(img) / 255 if normalize else np.float32(img)
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
 
     rg = (127 - lab[..., 1]) / 256
@@ -30,7 +30,6 @@ def lab_enhance_yellow(img: np.ndarray, normalize: bool=False) -> Tuple[np.ndarr
     # If we don't do the adding step before, the yellow lane is washed out.
     mixed = cv2.max(mixed, gray)
     cv2.normalize(mixed, mixed, 1, norm_type=cv2.NORM_MINMAX)
-    mixed = np.float32(mixed)
 
     lab[..., 0] = mixed * 100
     return mixed, lab

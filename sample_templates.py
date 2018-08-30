@@ -19,7 +19,8 @@ NEGATIVES = 0
 POSITIVES = 0
 
 # PATH = 'harder_challenge_video.mp4'
-PATH = 'challenge_video.mp4'
+# PATH = 'challenge_video.mp4'
+PATH = 'project_video.mp4'
 
 
 def onMouse(event, x, y, flags, params):
@@ -83,7 +84,7 @@ def main():
 
         img, _ = cc.undistort(img, False)
         img = bev.warp(img)
-        img, _ = lab_enhance_yellow(img)
+        img, _ = lab_enhance_yellow(img, normalize=True)
 
         current_pos = cap.get(cv2.CAP_PROP_POS_FRAMES)
 
