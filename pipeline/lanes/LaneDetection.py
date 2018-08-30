@@ -37,6 +37,8 @@ class LaneDetection:
         print(right_track)
 
         if self._params.render_boxes:
+            render_rects(img, left_track.failed_rects, .25)
+            render_rects(img, right_track.failed_rects, .25)
             render_rects(img, left_track.rects, 1.0)
             render_rects(img, right_track.rects, 1.0)
 
@@ -64,8 +66,8 @@ class LaneDetection:
             log.warning('No seed generated for {}.'.format(side))
             return self._invalid_track(side)
         log.debug('Seed for {} at x={}.'.format(side, histogram.pos[0]))
-        rects, xs, ys = self._search_line(edges, histogram.pos[0])
-        return self._create_track(side, rects, xs, ys, self._params.mx)
+        rects, xs, ys, failed_rects = self._search_line(edges, histogram.pos[0])
+        return self._create_track(side, rects, xs, ys, self._params.mx, failed_rects=failed_rects)
 
     def _validate_fit(self, edges: np.ndarray, fit: Fit) -> Optional[Rects]:
         assert fit is not None
@@ -150,12 +152,13 @@ class LaneDetection:
         values = values[candidates][:k].tolist()
         return SeedHistogram(pos=maxima, val=values)
 
-    def _search_line(self, edges: np.ndarray, seed_x: int) -> Tuple[Rects, List[int], List[int]]:
+    def _search_line(self, edges: np.ndarray, seed_x: int) -> Tuple[Rects, List[int], List[int], Rects]:
         params = self._params
         threshold = params.search_px_lo
 
         strikes = 0
         rects, xs, ys = [], [], []
+        failed_rects = []
         h, w = edges.shape[:2]
         max_height = h - h * params.search_height
         next_x, next_y = seed_x, h
@@ -178,6 +181,7 @@ class LaneDetection:
             total = hits / area
             if total < threshold:
                 strikes += 1
+                failed_rects.append(rect)
                 log.debug('Strike {} at {}, {}: {} < {}.'.format(strikes, seed_x, seed_y, total, threshold))
             else:
                 strikes = 0
@@ -220,7 +224,7 @@ class LaneDetection:
             # We could terminate the search if we are on the window edge already
             # and are below threshold.
 
-        return rects, xs, ys
+        return rects, xs, ys, failed_rects
 
     def _refine_local_fit(self, next_x: int, next_y: int, xs: List[int], ys: List[int]):
         """
@@ -272,10 +276,12 @@ class LaneDetection:
 
     @staticmethod
     def _invalid_track(side: TrackType):
-        return Track(side=side, fit=(0, 0, 0), curvature_radius=CURVATURE_INVALID, confidence=0, rects=[], valid=False)
+        return Track(side=side, fit=(0, 0, 0), curvature_radius=CURVATURE_INVALID, confidence=0,
+                     rects=[], valid=False, failed_rects=[])
 
     def _create_track(self, side: TrackType, rects: Rects,
-                      xs: Optional[List[int]], ys: Optional[List[int]], mx: float) -> Track:
+                      xs: Optional[List[int]], ys: Optional[List[int]], mx: float,
+                      failed_rects: Optional[Rects]=None) -> Track:
         alpha = self._params.fit_quality_decay
         beta = self._params.fit_quality_allowed_deviation
 
@@ -298,4 +304,5 @@ class LaneDetection:
         y_eval = np.max(ys)
         cr = curvature_radius(fit, y_eval, mx)
 
-        return Track(side=side, fit=fit, rects=rects, curvature_radius=cr, valid=True, confidence=confidence)
+        return Track(side=side, fit=fit, rects=rects, curvature_radius=cr, valid=True, confidence=confidence,
+                     failed_rects=failed_rects)
