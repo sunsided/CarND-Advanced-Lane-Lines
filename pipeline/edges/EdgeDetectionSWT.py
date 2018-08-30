@@ -1,18 +1,18 @@
 import cv2
 import numpy as np
 from typing import Optional
+
+from pipeline.edges.EdgeDetectionBase import EdgeDetectionBase
 from pipeline.swt import apply_swt, get_edges, get_gradients
 
 
-class EdgeDetectionSWT:
+class EdgeDetectionSWT(EdgeDetectionBase):
     """
     Obtains edges for for further processing using a Stroke Width Transform.
     """
-    def __init__(self, mask: Optional[np.ndarray]=None,
-                 blur_size: int=7, blur_strength: int=5,
-                 min_length: int=3, max_length: int=24,
-                 canny_lo: int=8, canny_hi: int=16,
-                 edge_response: float=0, out_blur_size: int=3):
+    def __init__(self, mask: Optional[np.ndarray] = None, blur_size: int = 7, blur_strength: int = 5,
+                 min_length: int = 3, max_length: int = 24, canny_lo: int = 8, canny_hi: int = 16,
+                 edge_response: float = 0, out_blur_size: int = 3):
         """
         Initializes a new instance of the EdgeDetection class.
         :param mask: The ROI mask.
@@ -25,6 +25,7 @@ class EdgeDetectionSWT:
         :param edge_response: The minimum required edge response.
         :param out_blur_size: The final median blur window size.
         """
+        super().__init__(morphological_filtering=False, detect_lines=False)
         self.mask = mask
         self.blur_size = blur_size
         self.blur_strength = blur_strength
@@ -35,16 +36,13 @@ class EdgeDetectionSWT:
         self.edge_response = edge_response
         self.median_window_size = out_blur_size
 
-    def filter(self, img: np.ndarray, is_lab: bool=False) -> np.ndarray:
+    def filter(self, img: np.ndarray) -> np.ndarray:
         """
         Filters the specified image.
         :param img: The image to obtain masks from.
-        :param is_lab: If False, the image is assumed to be BGR and will be converted to L*a*b*;
-                       if True, the image is assumed to be L*a*b* already.
         :return: The pre-filtered image.
         """
-        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB) if not is_lab else img
-        li = lab[..., 0].copy()
+        li = img.copy()
 
         if self.blur_size > 0 and self.blur_strength > 0:
             blurred = cv2.GaussianBlur(li, (self.blur_size, self.blur_size), self.blur_strength)

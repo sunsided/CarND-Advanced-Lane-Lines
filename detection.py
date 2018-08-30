@@ -2,26 +2,35 @@
 Runs the actual lane line detection on the specified video.
 """
 
+import logging
 import argparse
 import os
+from typing import Optional
+
 import cv2
 import numpy as np
 from datetime import datetime
 
-from pipeline import ImageSection, detect_and_render_lanes, VALID_COLOR, CACHED_COLOR, WARNING_COLOR, curvature_radius
-from pipeline.preprocessing import detect_lane_pixels
+from pipeline import ImageSection, curvature_radius, CURVATURE_INVALID, curvature_valid
+from pipeline import detect_lane_pixels, detect_lane_pixels_2, lab_enhance_yellow
 from pipeline.transform import *
 from pipeline.edges import *
 from pipeline.lanes import *
 
 
+log = logging.getLogger(__name__)
+
+
 def main(args):
+    logging.basicConfig(level=logging.INFO)
+
     cap = cv2.VideoCapture(args.file)
     if not cap:
         print('Failed reading video file.')
         return
 
     fps = cap.get(cv2.CAP_PROP_FPS)
+    num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -61,36 +70,44 @@ def main(args):
                        section_width=3.6576,  # one lane width in meters
                        section_height=2 * 13.8826)  # two dash distances in meters
 
-    mx = bev.units_per_pixel_x
-    my = bev.units_per_pixel_y
-
     roi_mask = build_roi_mask()
     roi_mask_hard = build_roi_mask(10)
-
-    edg = EdgeDetectionNaive(detect_lines=False, mask=roi_mask)
-    swt = EdgeDetectionSWT(mask=roi_mask, max_length=8)
-    edt = EdgeDetectionTemporal(mask=roi_mask, detect_lines=False)
 
     lcm = LaneColorMasking(luminance_kernel_width=33)
     lcm.detect_lines = False
     lcm.blue_threshold = 250
     lcm.light_cutoff = .95
 
-    state = LaneDetectionState()
-    curvature_invalid = float('inf')
-    curvature_hist = curvature_invalid
+    edn = EdgeDetectionNaive(detect_lines=False, mask=roi_mask)
+    edc = EdgeDetectionConv(detect_lines=False, mask=roi_mask)
+    swt = EdgeDetectionSWT(mask=roi_mask, max_length=8)
+    edt = EdgeDetectionTemporal(mask=roi_mask, detect_lines=False)
+    edm = EdgeDetectionTemplateMatching(path='templates', mask=roi_mask)
+
+    edg_fun = detect_lane_pixels_2
+    edg_primary = None  # edc
+    edg_secondary = edm
+    edg_threshold = 0.5
+    edg_lcm = None  # type: Optional[LaneColorMasking]
+
+    params = LaneDetectionParams(mx=bev.units_per_pixel_x, my=bev.units_per_pixel_y,
+                                 render_boxes=True, render_lanes=True)
+    lane_detection = LaneDetection(params)
+    lanes = lane_detection.lanes
+
+    curvature_hist = CURVATURE_INVALID
     curvature_age = 0
     curvature_max_age = 16
 
-    def curvature_valid(x) -> bool:
-        return not np.isinf(x)
+    seek_to = max(0, min(num_frames - 1, args.seek))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, seek_to)
 
     while True:
         t_start = datetime.now()
         ret, img = cap.read()
         if not ret:
             break
-        print('Processing frame {} ...'.format(int(cap.get(cv2.CAP_PROP_POS_FRAMES))))
+        log.info('Processing frame {} ...'.format(int(cap.get(cv2.CAP_PROP_POS_FRAMES))))
 
         # Undistort and transform to bird's eye view
         img, _ = cc.undistort(img, False)
@@ -98,22 +115,21 @@ def main(args):
         warped_f = np.float32(warped) / 255
 
         # Convert to grayscale and normalize OpenCV L*a*b* value ranges.
-        lab = cv2.cvtColor(warped_f, cv2.COLOR_BGR2LAB)
-        yellows = lab[..., 2] / 127
-        yellows[yellows < 0.5] = 0
-        cv2.normalize(yellows, yellows, 1, norm_type=cv2.NORM_MINMAX)
-        gray = cv2.max(lab[..., 0] / 100, yellows)
-        lab[..., 0] = gray * 100
+        gray, lab = lab_enhance_yellow(warped_f)
+        warped_f = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
         # Preprocessing: Detect lane line pixel candidates
-        warped_f = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-        warped = np.uint8(warped_f * 255)  # type: np.ndarray
-        edges = detect_lane_pixels(warped, edg, swt, lcm) * roi_mask_hard
+        edges = edg_fun(lab, gray, edg_primary, edg_secondary, edg_lcm, edg_threshold) * roi_mask_hard
 
         # Detect the lane lines
         canvas = warped_f.copy()
-        results = detect_and_render_lanes(canvas, edges, state, mx, my, render_lanes=True, render_boxes=True)
-        (left_valid, left_fit), (right_valid, right_fit) = results
+        lane_detection.detect_and_render_lanes(canvas, edges)
+
+        left_valid = lanes.left.valid
+        left_fit = lanes.left.smoothened_fit()
+
+        right_valid = lanes.right.valid
+        right_fit = lanes.right.smoothened_fit()
 
         # Prepare a image for alpha blending.
         img = np.float32(img) / 255.
@@ -144,7 +160,7 @@ def main(args):
             lane_center = (bottom_left + bottom_right) / 2
             delta = 150 - lane_center
             deviation_from_center = delta / 50
-            deviation_from_center_m = delta * mx
+            deviation_from_center_m = delta * params.mx
         else:
             deviation_from_center = None
             deviation_from_center_m = None
@@ -164,36 +180,38 @@ def main(args):
                 all = left
             else:
                 all = right
-            color = VALID_COLOR if (left_valid and right_valid) else \
-                (CACHED_COLOR if left_valid or right_valid else WARNING_COLOR)
+            color = LaneColor.Valid if (left_valid and right_valid) else \
+                (LaneColor.Cached if left_valid or right_valid else LaneColor.Warning)
             measurement_alpha = 0.4 if left_valid and right_valid else 0.1
-            cv2.fillPoly(img_alpha, [all], color, lineType=cv2.LINE_AA)
+            cv2.fillPoly(img_alpha, [all], color.value, lineType=cv2.LINE_AA)
             img = cv2.addWeighted(img, (1 - measurement_alpha), img_alpha, measurement_alpha, 0)
 
         # Draw the lane lines
         if left is not None:
-            color = VALID_COLOR if left_valid else CACHED_COLOR
-            cv2.polylines(img, [left], False, color, 3, lineType=cv2.LINE_AA)
+            alpha = 1 - (lanes.left.age / params.lane_max_age)
+            color = np.array(LaneColor.Valid.value) * alpha + np.array(LaneColor.Warning.value) * (1 - alpha)
+            cv2.polylines(img, [left], False, tuple(color), 3, lineType=cv2.LINE_AA)
         if right is not None:
-            color = VALID_COLOR if right_valid else CACHED_COLOR
-            cv2.polylines(img, [right], False, color, 3, lineType=cv2.LINE_AA)
+            alpha = 1 - (lanes.right.age / params.lane_max_age)
+            color = np.array(LaneColor.Valid.value) * alpha + np.array(LaneColor.Warning.value) * (1 - alpha)
+            cv2.polylines(img, [right], False, tuple(color), 3, lineType=cv2.LINE_AA)
 
         # Render the HUD text
         curvature = 0
         if (left is not None) and (right is None):
-            cl_b = curvature_radius(left_fit, warped.shape[0], mx)
-            cl_t = curvature_radius(left_fit, 0, mx)
+            cl_b = curvature_radius(left_fit, warped.shape[0], params.mx)
+            cl_t = curvature_radius(left_fit, 0, params.mx)
             curvature = (cl_b + cl_t) / 2
         elif (left is None) and (right is not None):
-            cr_b = curvature_radius(right_fit, warped.shape[0], mx)
-            cr_t = curvature_radius(right_fit, 0, mx)
+            cr_b = curvature_radius(right_fit, warped.shape[0], params.mx)
+            cr_t = curvature_radius(right_fit, 0, params.mx)
             curvature = (cr_b + cr_t) / 2
         elif (left is not None) and (right is not None):
-            cl_b = curvature_radius(left_fit, warped.shape[0], mx)
-            cl_t = curvature_radius(left_fit, 0, mx)
+            cl_b = curvature_radius(left_fit, warped.shape[0], params.mx)
+            cl_t = curvature_radius(left_fit, 0, params.mx)
             cl = (cl_b + cl_t) / 2
-            cr_b = curvature_radius(right_fit, warped.shape[0], mx)
-            cr_t = curvature_radius(right_fit, 0, mx)
+            cr_b = curvature_radius(right_fit, warped.shape[0], params.mx)
+            cr_t = curvature_radius(right_fit, 0, params.mx)
             cr = (cr_b + cr_t) / 2
             agreement = cl * cr > 0
             measurement_alpha = 0.5
@@ -205,7 +223,7 @@ def main(args):
                 curvature = 0
 
         # If the curvature suddenly flips signs from the previous value, drop it
-        if curvature * curvature_hist > 0 and curvature_valid(curvature_hist):
+        if curvature_valid(curvature_hist) and (curvature * curvature_hist > 0):
             mix_alpha = 0.1
             curvature_hist = mix_alpha * curvature + (1 - mix_alpha) * curvature_hist
             curvature_age = 0
@@ -215,7 +233,7 @@ def main(args):
         else:
             curvature_age += 1
             if curvature_age >= curvature_max_age:
-                curvature_hist = curvature_invalid
+                curvature_hist = CURVATURE_INVALID
                 curvature_age = 0
 
         # Display lane center deviation
@@ -228,7 +246,7 @@ def main(args):
         text = 'Curvature radius: {0:0.2f}m'.format(curvature_hist)
         if not curvature_valid(curvature_hist):
             text = 'Curvature radius: disagreement'
-        elif curvature_hist == 0:
+        elif curvature_hist == 0 or abs(curvature_hist) > 3500:
             text = 'Curvature radius: none'
         cv2.putText(img, text, (4, 48), cv2.FONT_HERSHEY_DUPLEX, 0.75, (1, 1, 1), 1, cv2.LINE_AA)
 
@@ -254,6 +272,9 @@ def main(args):
         if cv2.waitKey(t_wait) == 27:
             break
 
+        # Apply aging
+        lanes.increment_age()
+
     if wrt is not None:
         wrt.release()
     cap.release()
@@ -266,6 +287,8 @@ def parse_args():
                    help='The video file to process.')
     v.add_argument('-w', '--write', dest='write', default=None,
                    help='Writes an output video file')
+    v.add_argument('-s', '--seek', dest='seek', default=0, type=int,
+                   help='The video frame to seek to')
     args = parser.parse_args()
     if not os.path.exists(args.file):
         parser.error('The specified video {} could not be found.'.format(args.file))

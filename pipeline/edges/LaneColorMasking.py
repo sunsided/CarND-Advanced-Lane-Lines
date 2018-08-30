@@ -56,7 +56,7 @@ class LaneColorMasking:
             li = cv2.equalizeHist(li)
         b = lab[..., 2]
         if self._lc_kernel_size > 0:
-            b = cv2.equalizeHist(b)
+            b = cv2.equalizeHist(np.uint8(b * 256 - 127))
 
         l_mask = np.zeros(shape=li.shape[:2], dtype=np.uint8)
         l_mask[li >= self.light_cutoff * li.max()] = 255

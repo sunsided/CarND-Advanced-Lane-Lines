@@ -1,14 +1,17 @@
 import cv2
 import numpy as np
 from typing import Optional
+
+from pipeline.edges.EdgeDetectionBase import EdgeDetectionBase
 from pipeline.non_line_suppression import non_line_suppression
 
 
-class EdgeDetectionTemporal:
+class EdgeDetectionTemporal(EdgeDetectionBase):
     """
     Obtains edge proposals using a temporal smoothing approach.
     """
-    def __init__(self, mask: Optional[np.ndarray]=None, detect_lines: bool=False):
+    def __init__(self, mask: Optional[np.ndarray] = None, detect_lines: bool = False):
+        super().__init__(detect_lines)
         self._mask = mask
         self._previous_edges = None
         self._previous_grays_slow = None
@@ -54,8 +57,7 @@ class EdgeDetectionTemporal:
                        if True, the image is assumed to be L*a*b* already.
         :return: The pre-filtered image.
         """
-        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB) if not is_lab else img
-        gray = cv2.GaussianBlur(lab[..., 0], (3, 3), 5)
+        gray = cv2.GaussianBlur(img, (3, 3), 5)
 
         # Equalize for edge detection
         equalized = np.ma.masked_equal(gray, 0)
