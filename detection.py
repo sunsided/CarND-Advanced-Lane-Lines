@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 
 
 def main(args):
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.INFO)
 
     cap = cv2.VideoCapture(args.file)
     if not cap:
@@ -125,14 +125,11 @@ def main(args):
         canvas = warped_f.copy()
         lane_detection.detect_and_render_lanes(canvas, edges)
 
-        left_valid = lanes.left.track.valid
-        left_fit = lanes.left.track.fit
+        left_valid = lanes.left.valid
+        left_fit = lanes.left.smoothened_fit()
 
-        right_valid = lanes.right.track.valid
-        right_fit = lanes.right.track.fit
-
-        # Apply aging
-        lanes.increment_age()
+        right_valid = lanes.right.valid
+        right_fit = lanes.right.smoothened_fit()
 
         # Prepare a image for alpha blending.
         img = np.float32(img) / 255.
@@ -191,11 +188,13 @@ def main(args):
 
         # Draw the lane lines
         if left is not None:
-            color = LaneColor.Valid if left_valid else LaneColor.Cached
-            cv2.polylines(img, [left], False, color.value, 3, lineType=cv2.LINE_AA)
+            alpha = 1 - (lanes.left.age / params.lane_max_age)
+            color = np.array(LaneColor.Valid.value) * alpha + np.array(LaneColor.Warning.value) * (1 - alpha)
+            cv2.polylines(img, [left], False, tuple(color), 3, lineType=cv2.LINE_AA)
         if right is not None:
-            color = LaneColor.Valid if right_valid else LaneColor.Cached
-            cv2.polylines(img, [right], False, color.value, 3, lineType=cv2.LINE_AA)
+            alpha = 1 - (lanes.right.age / params.lane_max_age)
+            color = np.array(LaneColor.Valid.value) * alpha + np.array(LaneColor.Warning.value) * (1 - alpha)
+            cv2.polylines(img, [right], False, tuple(color), 3, lineType=cv2.LINE_AA)
 
         # Render the HUD text
         curvature = 0
@@ -247,7 +246,7 @@ def main(args):
         text = 'Curvature radius: {0:0.2f}m'.format(curvature_hist)
         if not curvature_valid(curvature_hist):
             text = 'Curvature radius: disagreement'
-        elif curvature_hist == 0:
+        elif curvature_hist == 0 or abs(curvature_hist) > 3500:
             text = 'Curvature radius: none'
         cv2.putText(img, text, (4, 48), cv2.FONT_HERSHEY_DUPLEX, 0.75, (1, 1, 1), 1, cv2.LINE_AA)
 
@@ -272,6 +271,9 @@ def main(args):
 
         if cv2.waitKey(t_wait) == 27:
             break
+
+        # Apply aging
+        lanes.increment_age()
 
     if wrt is not None:
         wrt.release()

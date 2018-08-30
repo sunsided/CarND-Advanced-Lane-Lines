@@ -16,7 +16,8 @@ log = logging.getLogger(__name__)
 class LaneDetection:
     def __init__(self, params: LaneDetectionParams):
         self._params = params  # type: LaneDetectionParams
-        self._lanes = Lanes(max_age=params.lane_max_age, max_history=params.lane_max_history)
+        self._lanes = Lanes(max_age=params.lane_max_age, max_history=params.lane_max_history,
+                            decay=params.fit_history_decay)
 
     @property
     def lanes(self):
@@ -26,6 +27,7 @@ class LaneDetection:
         lanes = self._lanes
 
         log.info('Track ages: {}, {}'.format(lanes.left.age, lanes.right.age))
+        log.info('History sizes: {}, {}'.format(len(lanes.left.history), len(lanes.right.history)))
 
         # Obtain the histogram for seed position detection.
         histogram = self._build_histogram(edges)
@@ -298,14 +300,20 @@ class LaneDetection:
         alpha = self._params.fit_quality_decay
         beta = self._params.fit_quality_allowed_deviation
 
-        min_boxes = self._params.boxes_thresh
+        suppress_first = 1
+        min_boxes = self._params.boxes_thresh + suppress_first
         if len(rects) < min_boxes and (len(xs) < min_boxes or len(ys) < min_boxes):
             return self._invalid_track(side)
 
+        rects = rects[suppress_first:]
         if xs is None or len(xs) == 0:
             xs = [(r[2] + r[0]) // 2 for r in rects]
+        else:
+            xs = xs[suppress_first:]
         if ys is None or len(xs) == 0:
             ys = [r[1] for r in rects]
+        else:
+            ys = ys[suppress_first:]
 
         # Fit a polynomial and determine quality by determining how much the rectangles deviate from the fit.
         fit = np.polyfit(ys, xs, deg=2)

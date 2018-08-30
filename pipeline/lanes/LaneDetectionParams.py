@@ -1,7 +1,7 @@
 class LaneDetectionParams:
     def __init__(self, mx: float, my: float,
-                 lane_max_age: int=10,
-                 lane_max_history: int=10,
+                 lane_max_age: int=35,
+                 lane_max_history: int=35,
                  search_px_lo: int=0.05,
                  search_box_width: int = 30,
                  search_box_height: int = 15,
@@ -11,9 +11,10 @@ class LaneDetectionParams:
                  search_local_fit_hist: int=8,
                  fit_quality_allowed_deviation: float=5,
                  fit_quality_decay: float=0.09,
+                 fit_history_decay: float = 4,
                  confidence_thresh: float=.5,
                  confidence_thresh_cached: float=.5,
-                 boxes_thresh: int=7,
+                 boxes_thresh: int=15,
                  boxes_thresh_cached: int=4,
                  validation_min_box_support: float=0.6,
                  validation_px_lo: float=0.05,
@@ -35,6 +36,7 @@ class LaneDetectionParams:
         :param fit_quality_allowed_deviation: The number of pixels search rectangles are allowed
                                               to deviate from the fit before quality decays.
         :param fit_quality_decay: The factor by which fit quality decays exponentially.
+        :param fit_history_decay: The factor by which historical fit importance decays exponentially.
         :param confidence_thresh:
         :param confidence_thresh_cached:
         :param boxes_thresh: The minimum number of pixels required to accept a box.
@@ -60,6 +62,7 @@ class LaneDetectionParams:
         self.search_local_fit_hist = search_local_fit_hist
         self.fit_quality_allowed_deviation = fit_quality_allowed_deviation
         self.fit_quality_decay = fit_quality_decay
+        self.fit_history_decay = fit_history_decay
         self.confidence_thresh = confidence_thresh
         self.confidence_thresh_cached = confidence_thresh_cached
         self.boxes_thresh = boxes_thresh
