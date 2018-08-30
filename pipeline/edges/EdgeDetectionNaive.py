@@ -34,16 +34,13 @@ class EdgeDetectionNaive:
         self._stroke_filter = False
         self._kernel = self._build_kernel(self._kernel_width, self._kernel_pad)
 
-    def filter(self, img: np.ndarray, is_lab: bool=False) -> np.ndarray:
+    def filter(self, img: np.ndarray) -> np.ndarray:
         """
         Filters the specified image.
         :param img: The image to obtain masks from.
-        :param is_lab: If False, the image is assumed to be BGR and will be converted to L*a*b*;
-                       if True, the image is assumed to be L*a*b* already.
         :return: The pre-filtered image.
         """
-        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB) if not is_lab else img
-        li = cv2.blur(lab[..., 0], (5, 5))
+        li = cv2.blur(img, (5, 5))
 
         canny_8 = cv2.Canny(li, 16, 32) * self._roi_mask
         output = np.zeros(canny_8.shape[:2], np.float32)
@@ -79,15 +76,13 @@ class EdgeDetectionNaive:
 
         return output
 
-    def detect(self, img: np.ndarray, is_lab: bool=False) -> np.ndarray:
+    def detect(self, img: np.ndarray) -> np.ndarray:
         """
         Processes the specified image.
         :param img: The image to obtain masks from.
-        :param is_lab: If False, the image is assumed to be BGR and will be converted to L*a*b*;
-                       if True, the image is assumed to be L*a*b* already.
         :return: An image containing the detected edges.
         """
-        filtered = self.filter(img, is_lab)
+        filtered = self.filter(img)
 
         # Detect edges
         edges = cv2.Canny(np.uint8(filtered * 255), self.canny_lo, self.canny_hi)

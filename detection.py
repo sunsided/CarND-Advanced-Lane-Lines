@@ -5,12 +5,14 @@ Runs the actual lane line detection on the specified video.
 import logging
 import argparse
 import os
+from typing import Optional
+
 import cv2
 import numpy as np
 from datetime import datetime
 
 from pipeline import ImageSection, curvature_radius, CURVATURE_INVALID, curvature_valid
-from pipeline.preprocessing import detect_lane_pixels
+from pipeline import detect_lane_pixels, detect_lane_pixels_2, lab_enhance_yellow
 from pipeline.transform import *
 from pipeline.edges import *
 from pipeline.lanes import *
@@ -71,19 +73,22 @@ def main(args):
     roi_mask = build_roi_mask()
     roi_mask_hard = build_roi_mask(10)
 
-    edg = EdgeDetectionNaive(detect_lines=False, mask=roi_mask)
-    edc = EdgeDetectionConv(detect_lines=False, mask=roi_mask)
-    swt = EdgeDetectionSWT(mask=roi_mask, max_length=8)
-    edt = EdgeDetectionTemporal(mask=roi_mask, detect_lines=False)
-
-    edg_primary = edc
-    edg_secondary = swt
-    edg_threshold = 0.3
-
     lcm = LaneColorMasking(luminance_kernel_width=33)
     lcm.detect_lines = False
     lcm.blue_threshold = 250
     lcm.light_cutoff = .95
+
+    edn = EdgeDetectionNaive(detect_lines=False, mask=roi_mask)
+    edc = EdgeDetectionConv(detect_lines=False, mask=roi_mask)
+    swt = EdgeDetectionSWT(mask=roi_mask, max_length=8)
+    edt = EdgeDetectionTemporal(mask=roi_mask, detect_lines=False)
+    edm = EdgeDetectionTemplateMatching(path='templates', mask=roi_mask)
+
+    edg_fun = detect_lane_pixels
+    edg_primary = edc
+    edg_secondary = edm
+    edg_threshold = 0.5
+    edg_lcm = None  # type: Optional[LaneColorMasking]
 
     params = LaneDetectionParams(mx=bev.units_per_pixel_x, my=bev.units_per_pixel_y,
                                  render_boxes=True, render_lanes=True)
@@ -110,17 +115,12 @@ def main(args):
         warped_f = np.float32(warped) / 255
 
         # Convert to grayscale and normalize OpenCV L*a*b* value ranges.
-        lab = cv2.cvtColor(warped_f, cv2.COLOR_BGR2LAB)
-        yellows = lab[..., 2] / 127
-        yellows[yellows < 0.5] = 0
-        cv2.normalize(yellows, yellows, 1, norm_type=cv2.NORM_MINMAX)
-        gray = cv2.max(lab[..., 0] / 100, yellows)
-        lab[..., 0] = gray * 100
+        gray, lab = lab_enhance_yellow(warped_f)
 
         # Preprocessing: Detect lane line pixel candidates
         warped_f = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
         warped = np.uint8(warped_f * 255)  # type: np.ndarray
-        edges = detect_lane_pixels(warped, edg_primary, edg_secondary, lcm, edg_threshold) * roi_mask_hard
+        edges = edg_fun(lab, gray, edg_primary, edg_secondary, edg_lcm, edg_threshold) * roi_mask_hard
 
         # Detect the lane lines
         canvas = warped_f.copy()

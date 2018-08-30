@@ -92,14 +92,25 @@ class BirdsEyeView:
     def units_per_pixel_y(self):
         return self._units_per_pixel
 
-    def warp(self, img: np.ndarray) -> np.ndarray:
+    def warp(self, img: np.ndarray, flags: Optional[int] = cv2.INTER_AREA) -> np.ndarray:
         """
         Warps an image into bird's eye view.
         :param img: The image to warp
+        :param flags: The interpolation methods to use.
         :return: The warped image.
         """
-        warped = cv2.warpPerspective(img, self._M, (3 * self._base_width, self._projected_height))
+        warped = cv2.warpPerspective(img, self._M, (3 * self._base_width, self._projected_height),
+                                     flags=flags, borderMode=cv2.BORDER_CONSTANT)
         return warped
+
+    def build_mask(self, img: np.ndarray) -> np.ndarray:
+        """
+        Builds a mask of the original image where invalid pixels are black.
+        :param img: The image to warp
+        :return: The warped image.
+        """
+        img = np.ones_like(img).astype(np.float32)
+        return self.warp(img, flags=cv2.INTER_NEAREST)
 
     def unwarp(self, img: np.ndarray, size: Size, dst: Optional[np.ndarray]=None) -> np.ndarray:
         """
