@@ -5,9 +5,15 @@ from typing import Optional, Union, Tuple
 from pipeline.edges import *
 
 
-def lab_enhance_yellow(img: np.ndarray, normalize: bool=False) -> Tuple[np.ndarray, np.ndarray]:
-    img = np.float32(img) / 255 if normalize else np.float32(img)
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+def lab_enhance_yellow(img: np.ndarray, normalize: bool=False, power: float=2, ypower: float=2) \
+        -> Tuple[np.ndarray, np.ndarray]:
+    img = (np.float32(img) / 255) if normalize else img
+
+    # NOTE That the next statement is using RGB even though the input image
+    # is required to be BGR! This is due to the development setup in the original
+    # Jupyter notebook. Changing the channel order will change meaning of the L*a*b*
+    # channels; this could be updated in the future. For now, it works as it is.
+    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
 
     rg = (127 - lab[..., 1]) / 256
     yb = (127 - lab[..., 2]) / 256
@@ -16,19 +22,19 @@ def lab_enhance_yellow(img: np.ndarray, normalize: bool=False) -> Tuple[np.ndarr
     yb[rg < 0.2] = 0  # suppress red
     yb[rg > 0.8] = 0  # suppress green
 
+    if ypower != 1:
+        yb = yb ** ypower
+
     # Normalize "yellow channel" to 0..1
     cv2.normalize(yb, yb, 1, norm_type=cv2.NORM_MINMAX)
 
     # OpenCV L*a*b*'s L is 0..100
     gray = lab[..., 0] / 100
+    if power != 1:
+        gray = gray ** power
 
-    # We first add the channels, then pick renormalize.
-    mixed = gray + yb
-    cv2.normalize(mixed, mixed, 1, norm_type=cv2.NORM_MINMAX)
-
-    # Next we pick the maximum from the actual graylevels and renormalize again.
-    # If we don't do the adding step before, the yellow lane is washed out.
-    mixed = cv2.max(mixed, gray)
+    # Whatever is brighter is our pixel value.
+    mixed = cv2.max(gray, yb)
     cv2.normalize(mixed, mixed, 1, norm_type=cv2.NORM_MINMAX)
 
     lab[..., 0] = mixed * 100
