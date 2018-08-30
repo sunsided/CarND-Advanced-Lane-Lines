@@ -41,12 +41,10 @@ class LaneDetection:
         # Search the left line
         if left_track is None:
             left_track = self._find_track(TrackType.Left, self._is_left, edges, histogram)
-        print(left_track)
 
         # Search the right line
         if right_track is None:
             right_track = self._find_track(TrackType.Right, self._is_right, edges, histogram)
-        print(right_track)
 
         if self._params.render_boxes:
             render_rects(img, [r for (r, v) in zip(left_track.rects, left_track.rects_valid) if not v], .25)
