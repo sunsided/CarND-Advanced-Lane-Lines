@@ -25,6 +25,8 @@ class LaneDetection:
     def detect_and_render_lanes(self, img: np.ndarray, edges: np.ndarray):
         lanes = self._lanes
 
+        log.info('Track ages: {}, {}'.format(lanes.left.age, lanes.right.age))
+
         # Obtain the histogram for seed position detection.
         histogram = self._build_histogram(edges)
 
@@ -37,17 +39,19 @@ class LaneDetection:
         print(right_track)
 
         if self._params.render_boxes:
-            render_rects(img, left_track.failed_rects, .25)
-            render_rects(img, right_track.failed_rects, .25)
-            render_rects(img, left_track.rects, 1.0)
-            render_rects(img, right_track.rects, 1.0)
+            render_rects(img, [r for (r, v) in zip(left_track.rects, left_track.rects_valid) if not v], .25)
+            render_rects(img, [r for (r, v) in zip(right_track.rects, right_track.rects_valid) if not v], .25)
+            render_rects(img, [r for (r, v) in zip(left_track.rects, left_track.rects_valid) if v], 1.0)
+            render_rects(img, [r for (r, v) in zip(right_track.rects, right_track.rects_valid) if v], 1.0)
 
         if self._params.render_lanes:
             render_lane(img, left_track, LaneColor.Valid)
             render_lane(img, right_track, LaneColor.Valid)
 
-        lanes.left.append(left_track)
-        lanes.right.append(right_track)
+        if left_track.valid:
+            lanes.left.append(left_track)
+        if right_track.valid:
+            lanes.right.append(right_track)
 
     def _use_historical_track(self, img: np.ndarray, edges: np.ndarray, track: Optional[Track]):
         if track is None:
@@ -66,8 +70,8 @@ class LaneDetection:
             log.warning('No seed generated for {}.'.format(side))
             return self._invalid_track(side)
         log.debug('Seed for {} at x={}.'.format(side, histogram.pos[0]))
-        rects, xs, ys, failed_rects = self._search_line(edges, histogram.pos[0])
-        return self._create_track(side, rects, xs, ys, self._params.mx, failed_rects=failed_rects)
+        rects, xs, ys, rects_valid = self._search_line(edges, histogram.pos[0])
+        return self._create_track(side, rects, xs, ys, self._params.mx, rects_valid=rects_valid)
 
     def _validate_fit(self, edges: np.ndarray, fit: Fit) -> Optional[Rects]:
         assert fit is not None
@@ -152,13 +156,13 @@ class LaneDetection:
         values = values[candidates][:k].tolist()
         return SeedHistogram(pos=maxima, val=values)
 
-    def _search_line(self, edges: np.ndarray, seed_x: int) -> Tuple[Rects, List[int], List[int], Rects]:
+    def _search_line(self, edges: np.ndarray, seed_x: int) -> Tuple[Rects, List[int], List[int], List[bool]]:
         params = self._params
         threshold = params.search_px_lo
 
         strikes = 0
         rects, xs, ys = [], [], []
-        failed_rects = []
+        rect_valid = []
         h, w = edges.shape[:2]
         max_height = h - h * params.search_height
         next_x, next_y = seed_x, h
@@ -171,6 +175,11 @@ class LaneDetection:
             # The top coordinate of the current box will be the next seed Y coordinate.
             next_y = rect[1]
 
+            # Register the current information
+            rects.append(rect)
+            xs.append(seed_x)
+            ys.append(seed_y)
+
             # Obtain the centroid for the next window
             col_sums = np.squeeze(window.sum(axis=0))
 
@@ -181,13 +190,11 @@ class LaneDetection:
             total = hits / area
             if total < threshold:
                 strikes += 1
-                failed_rects.append(rect)
+                rect_valid.append(False)
                 log.debug('Strike {} at {}, {}: {} < {}.'.format(strikes, seed_x, seed_y, total, threshold))
             else:
                 strikes = 0
-                rects.append(rect)
-                xs.append(seed_x)
-                ys.append(seed_y)
+                rect_valid.append(True)
 
                 # Obtain the next search position by finding the horizontal location of
                 # the peak in local column-wise intensity (i.e. where most pixels are).
@@ -224,7 +231,13 @@ class LaneDetection:
             # We could terminate the search if we are on the window edge already
             # and are below threshold.
 
-        return rects, xs, ys, failed_rects
+        if strikes > 0:
+            rects = rects[:-strikes]
+            xs = xs[:-strikes]
+            ys = ys[:-strikes]
+            rect_valid = rect_valid[:-strikes]
+
+        return rects, xs, ys, rect_valid
 
     def _refine_local_fit(self, next_x: int, next_y: int, xs: List[int], ys: List[int]):
         """
@@ -277,15 +290,15 @@ class LaneDetection:
     @staticmethod
     def _invalid_track(side: TrackType):
         return Track(side=side, fit=(0, 0, 0), curvature_radius=CURVATURE_INVALID, confidence=0,
-                     rects=[], valid=False, failed_rects=[])
+                     rects=[], valid=False, rects_valid=[])
 
     def _create_track(self, side: TrackType, rects: Rects,
                       xs: Optional[List[int]], ys: Optional[List[int]], mx: float,
-                      failed_rects: Optional[Rects]=None) -> Track:
+                      rects_valid: List[bool]) -> Track:
         alpha = self._params.fit_quality_decay
         beta = self._params.fit_quality_allowed_deviation
 
-        min_boxes = 3
+        min_boxes = self._params.boxes_thresh
         if len(rects) < min_boxes and (len(xs) < min_boxes or len(ys) < min_boxes):
             return self._invalid_track(side)
 
@@ -305,4 +318,4 @@ class LaneDetection:
         cr = curvature_radius(fit, y_eval, mx)
 
         return Track(side=side, fit=fit, rects=rects, curvature_radius=cr, valid=True, confidence=confidence,
-                     failed_rects=failed_rects)
+                     rects_valid=rects_valid)

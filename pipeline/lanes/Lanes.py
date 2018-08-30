@@ -17,3 +17,7 @@ class Lanes:
     @property
     def right(self) -> LaneHistory:
         return self._right
+
+    def increment_age(self):
+        self._left.increment_age()
+        self._right.increment_age()

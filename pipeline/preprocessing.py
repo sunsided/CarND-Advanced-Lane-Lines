@@ -38,6 +38,9 @@ def lab_enhance_yellow(img: np.ndarray, normalize: bool=False, power: float=2, y
     cv2.normalize(mixed, mixed, 1, norm_type=cv2.NORM_MINMAX)
 
     lab[..., 0] = mixed * 100
+
+    # NOTE: As above, we're fixing the channels now.
+    lab = cv2.cvtColor(cv2.cvtColor(lab, cv2.COLOR_LAB2RGB), cv2.COLOR_BGR2LAB)
     return mixed, lab
 
 

@@ -25,6 +25,6 @@ Track = NamedTuple('Track', [('side', TrackType), ('valid', bool),
                              ('confidence', float),
                              ('fit', Fit),
                              ('rects', Rects),
-                             ('failed_rects', Rects)])
+                             ('rects_valid', List[bool])])
 
 HistoricalTrack = NamedTuple('HistoricalTrack', [('track', Optional[Track]), ('age', int)])

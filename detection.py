@@ -131,6 +131,9 @@ def main(args):
         right_valid = lanes.right.track.valid
         right_fit = lanes.right.track.fit
 
+        # Apply aging
+        lanes.increment_age()
+
         # Prepare a image for alpha blending.
         img = np.float32(img) / 255.
         img_alpha = img.copy()
