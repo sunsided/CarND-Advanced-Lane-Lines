@@ -306,10 +306,14 @@ class LaneDetection:
 
         suppress_first = 1
         min_boxes = self._params.boxes_thresh + suppress_first
-        if len(rects) < min_boxes and (len(xs) < min_boxes or len(ys) < min_boxes):
+        rects_invalid = (rects is None) or (len(rects) < min_boxes)
+        xs_invalid = (xs is None) or (len(xs) < min_boxes)
+        ys_invalid = (ys is None) or (len(ys) < min_boxes)
+        if rects_invalid and (xs_invalid or ys_invalid):
             return self._invalid_track(side)
 
-        rects = rects[suppress_first:]
+        if rects is not None:
+            rects = rects[suppress_first:]
         if xs is None or len(xs) == 0:
             xs = [(r[2] + r[0]) // 2 for r in rects]
         else:
