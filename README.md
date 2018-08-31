@@ -209,7 +209,7 @@ Here, the peaks clearly have shifted to the left, bootstrapping the search at ut
 This goes to show that a bad proposal generation easily throws off the whole pipeline in an instance.
 
 From the obtained seed positions, a marching boxes approach is used to detect a local trend in intensity shift using a similar local histogram-based algorithm: Starting two search windows at the seed positions on the bottom of the image (here, red for the left and cyan for the right lane line), each subsequent higher window is centered at the X location of highest columnwise intensity sums, i.e. histogram peaks. By doing so, the search windows follow the position of mean intensity, eventually "climbing up" the lane line. When not enough pixels are found within a box, the current position is assumed to be the center of the following window, thus searching "straight" up from the current position.
-After a stopping condition is triggered when the search window leaves the frame to either side or was unable to find enough pixels for a defined number of times, a second-order polynomial was fitted through the center coordinates of the boxes; these fits are rendered in yellow color on the following image.
+Eventually a stopping condition is triggered when the search window leaves the frame to either side or was unable to find enough pixels for a defined number of times. If enough boxes are found, a second-order polynomial is fitted through their center coordinates; these fits are shown in yellow color in the following image.
 
 ![](output_images/6_search.png)
 
