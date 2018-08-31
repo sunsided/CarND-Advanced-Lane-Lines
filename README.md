@@ -70,7 +70,7 @@ The whole procedure is extensively documented in the [./notebooks/2_birds_eye_vi
 
 In order to obtain a top-down view on the street, a "bird's eye view" transformation was performed. For this, four points in the image were picked and refined in such a way
 that they (as closely as possible) represent physically correct distances. Since I was unable to find clear regulations on lane widths and dashes, I used a close-up view of
-the [Juniperro Serra freeway](https://www.google.de/maps/@37.4441459,-122.2584509,74m/data=!3m1!1e3) ([Interstate 280](https://en.wikipedia.org/wiki/Interstate_280_(California))),
+the [Junipero Serra freeway](https://www.google.de/maps/@37.4441459,-122.2584509,74m/data=!3m1!1e3) ([Interstate 280](https://en.wikipedia.org/wiki/Interstate_280_(California))),
 the area the video was taken at, on Google Maps and sampled different measurements (lane widths, dash-to-dash distance, dot-to-dot distances, dash lengths etc.), taking the averages.
 
 ![](notebooks/images/junipero_serra_freeway_2.jpg)
