@@ -3,8 +3,7 @@
 
 The goal of this project is to create a software pipeline to identify the lane boundaries in a video, as well as determining possible and actual problems and pitfalls during that. A result of running the implemented pipeline on the project video can be seen at [https://www.youtube.com/watch?v=6-eFJ7o5GO4](https://www.youtube.com/watch?v=6-eFJ7o5GO4).
 
-![](output_images/snap4.jpg)
-
+<a href="https://www.youtube.com/watch?v=6-eFJ7o5GO4"><img src="output_images/snap4.jpg" /></a>
 
 ## The Project
 
@@ -178,93 +177,4 @@ The following image shows a detection after thresholding.
 
 ![](output_images/4_pattern_matching.png)
 
-Attempts to combine different edge detection and color picking techniques were ultimately discarded as leading to too many false positives or suppressing too many valid pixels, resulting in loss of track or almost impossible cold-start initialization. An example of a possible outcome of detection combination can be seen in the following image, where extremely bright spots and reflections lead to too many highlighted areas.
- 
-![](output_images/5_combination_hard.png)
-
-Here's a somewhat friendlier setup when nonbinary values are allowed; here, blue represents no candidates while red suggests strong support of lane lines.
-
-![](output_images/6_combination_easy.png)
-
-#### 4. Describe how (and identify where in your code) you identified lane-line pixels and fit their positions with a polynomial?
-
-The detection of lane lines is outlined in the [./notebooks/6_lane_line_regression.ipynb](notebooks/6_lane_line_regression.ipynb) notebook and implemented in the [`./pipeline/lanes/LaneDetection.py`](pipeline/lanes/LaneDetection.py) class.
-
-A search window starting from the bottom of the warped image is defined. The following image depicts the outcome of an earlier version of the proposal when combination techniques were still used, again in false-color representation:
-
-![](output_images/6_bootstrap.png)
-
-From this view, a histogram of column-wise intensities is generated with the goal of identifying the (X-axis) offsets that most probably contain lane lines.
-
-![](output_images/6_bootstrap_hist.png)
-
-In this histogram, peaks identify locations where lane lines are most likely to be found. It also shows a problem of the combination approach: A lot of "low importance" features can quickly add up to a peak, as can be seen at location `x=50`. If a binary threshold would have been used instead of "continuous" values, this scenario would have looked less dramatic. However, this heavily relies on a good threshold selection as well as a "nice" scenario, as this window selection shows:
-
-![](output_images/6_bootstrap_bad.png)
-
-Here, the peaks clearly have shifted to the left, bootstrapping the search at utterly wrong positions, given that we expect lane lines to be close to the locations `x=100` and `x=200` by design.
-
-![](output_images/6_bootstrap_bad_hist.png)
-
-This goes to show that a bad proposal generation easily throws off the whole pipeline in an instance.
-
-From the obtained seed positions, a marching boxes approach is used to detect a local trend in intensity shift using a similar local histogram-based algorithm: Starting two search windows at the seed positions on the bottom of the image (here, red for the left and cyan for the right lane line), each subsequent higher window is centered at the X location of highest columnwise intensity sums, i.e. histogram peaks. By doing so, the search windows follow the position of mean intensity, eventually "climbing up" the lane line. When not enough pixels are found within a box, the current position is assumed to be the center of the following window, thus searching "straight" up from the current position.
-After a stopping condition is triggered when the search window leaves the frame to either side or was unable to find enough pixels for a defined number of times, a second-order polynomial was fitted through the center coordinates of the boxes; these fits are rendered in yellow color on the following image.
-
-![](output_images/6_search.png)
-
-In friendly scenarios, this plays out fine, as the following image shows:
-
-![](output_images/6_search_2.png)
-
-However, a bad initialization or noise in the image quickly leads to degraded results, as can be seen in this result:
-
-![](output_images/6_search_3.png)
-
-When a fit has been found, the next iteration will attempt to reuse it directly: Along the fit, search windows are evaluated and a new confidence is calculated. If there is enough support, the fit is adjusted to the new rectangles. Only if this approach fails, the whole search pipeline is restarted.
-
-Some improvements were added to this general idea:
-
-- A local fit of the last boxes is used to steer the search to follow the local curvature. The idea here is that even if a box is missing, the lane line might still be curved, so search straight up either is fruitless or leads to a vastly broken fit.
-- The bottom-most box is discarded for the fit as it - being a seed position - is not necessarily agreeing with the remaining boxes.
-- Each fit is re-evaluated for support in the image to obtain a confidence measure of the lane line estimate. This is especially helpful if a lane line search is off by accident, leaving the actual track and being re-confirmed in a distance. In such kind of fit, the "missed" boxes count against the confidence.
-- Actual fits are finally averaged over a given history set using a Gaussian weighting scheme and the confidence in order to build a low-pass filter that is meant to be resilient to sudden changes.
-
-#### 5. Describe how (and identify where in your code) you calculated the radius of curvature of the lane and the position of the vehicle with respect to center.
-
-The calculation of the curvature of the line fit is implemented in [./pipeline/curvature.py](pipeline/curvature.py) and normalized to meters by making use of the first and second derivative of the quadratic fit (`f(x) = ax^2 + bx + c`).
-Specifically, the curvature is given as
-
-```python
-def curvature_radius(fit, y: float, mx: float) -> float:
-    coeff_a, coeff_b, coeff_c = fit
-    if coeff_a == 0:
-        return CURVATURE_INVALID
-    radius = ((1. + (2. * coeff_a * y + coeff_b) ** 2.) ** 1.5) / (2. * coeff_a)
-    return radius * mx
-```
-
-That is the square root of (one plus (the square of (the curve's first derivate `f'(x) = 2*a*x + b`)) raised to the power of three) divided by the curve's second derivative `f''(x) = 2*a`.
-
-
-#### 6. Provide an example image of your result plotted back down onto the road such that the lane area is identified clearly.
-
-Finally, the fit is backprojected using the inverse perspective transform and rendered onto the original (undistorted) video frame.
-
-![](output_images/snap1.jpg)
-
----
-
-### Discussion
-
-#### 1. Briefly discuss any problems / issues you faced in your implementation of this project.  Where will your pipeline likely fail?  What could you do to make it more robust?
-
-The implemented pipeline is far from perfect and definitely tailored towards the scenarios observed in the project videos. Because of that, most assumptions that are taken are likely to be invalid if the time of the day, the sky or simply the country changes. For example, if a lane fit is lost, one could argue that "staying at the right" side of the lane is a good idea - that is, unless you are in Britain, Hong Kong etc., where people drive on the left. At night, the color of the white lane lines might shift to a blue or red tint, depending on the street lights, so color corrections would be required.
-
-A lot of trouble in the challenge videos also comes from the static exposure setup of the camera. If the camera was able to adjust for overexposure e.g. by reducing shutter times, clearer views on the street could be obtained without having to fiddle around with thresholds that much. Reflections of the dashboard could be reduced by finding a better placement of the camera to begin with, etc. Losing track of lane lines requires to rely on information of previous fits, however most of the operations are performed in isolation, missing the spatio-temporal correlations between frames. Furthermore, even though a lot of information could be extracted from the video feed only e.g. using point tracking, adaptive approaches such as Kalman and particle filters could be used to their full power if more information about the physical system was known, such as sensor input from the wheels, accelerometer data, etc. For example, lane fits could be evolved over time given that we know the direction of the wheels and the current speed.
-
-When the street is not flat or the lane is oriented orthogonal to the camera, all assumptions about the orientation of edges are basically invalid. That means that when entering a road, obtaining an understanding of lanes is close to impossible. And even if the lane is oriented with the view, the lane line might either not exist or be hidden to begin with, as it is in certain parts of the "harder challenge" video. Relying on intensity spikes only can also be a problem in the presence of bright metal surfaces such as a crash barrier, so some more engineering is required there as well.
-
-Most of the operations are done in vain: For example, it is not required to perform edge detection, convolutions or template matching on the whole image if only a fraction of it is going to be searched anyway. When search restarts from a previous fit, only edges within and/or around the previous search windows need to be calculated. Likewise, if search is starting from scratch, a edges in the bottom part of the image are required in addition to the search windows. Most of the time, the edges of the top of the image never are evaluated. Likewise, calculation intensive operations such as template matching can be performed on locations where lane lines are expected only; that is, rather than convolving the whole image with the templates, a Canny detector can be used to obtain _possible_ lane lines, which then need to be verified or discarded using a more exact algorithm. This kind of cascaded operation helps speeding up e.g. face detections like the Viola-Jones algorithm and are, generally speaking, suitable to this scenario as well.
-
-Searching the lane line using marching boxes - which is susceptible to errors in the proposal generation, as was shown above - could be avoided entirely in favor of directly attempting to fit a polynomial or spline using probabilistic approaches such as RANSAC, where the search could be conditioned with information from previous frames as well. Using superpixel techniques such as SLIC on the original image before performing edge detection could help reducing noise while isolating lane lines from their surroundings. However, as the template matching approach has shown, relying on thresholds and channel combinations might just be the wrong approach to tackle this problem. The next time around, I would treat the whole project as a machine learning problem where polynomial or spline coefficients would be predicted directly from the image. It certainly makes the whole project a data problem, rather than an engineering one, but even the naive template matching outcomes look much more promising than anything else I tried.
+Attempts to combine different edge detection and color picking techniques were ultimately discarded as leading to too many false positives or suppressing too many valid pixels, resulting in loss of track or almost impossible cold-start initialization. An example of a possible outcome of detection combination can be s
