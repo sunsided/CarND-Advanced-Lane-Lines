@@ -7,6 +7,8 @@ A result of running the implemented pipeline on the project video can be seen at
 
 <a href="https://www.youtube.com/watch?v=6-eFJ7o5GO4"><img src="output_images/snap4.jpg" /></a>
 
+The main script is [detection.py](detection.py).
+
 ## The Project
 
 The goals / steps of this project are the following:
