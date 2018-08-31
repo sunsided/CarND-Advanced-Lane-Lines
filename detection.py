@@ -12,7 +12,7 @@ import numpy as np
 from datetime import datetime
 
 from pipeline import ImageSection, curvature_radius, CURVATURE_INVALID, curvature_valid
-from pipeline import detect_lane_pixels, detect_lane_pixels_2, lab_enhance_yellow
+from pipeline import detect_lane_pixels_2, lab_enhance_yellow
 from pipeline.transform import *
 from pipeline.edges import *
 from pipeline.lanes import *
@@ -98,6 +98,8 @@ def main(args):
     curvature_hist = CURVATURE_INVALID
     curvature_age = 0
     curvature_max_age = 16
+    center_prev = None
+    center_alpha = 0.25
 
     seek_to = max(0, min(num_frames - 1, args.seek))
     cap.set(cv2.CAP_PROP_POS_FRAMES, seek_to)
@@ -173,18 +175,22 @@ def main(args):
         img_alpha = img.copy()
 
         # Only fill if we have valid tracks
-        if (left is not None) or (right is not None):
-            if (left is not None) and (right is not None):
-                all = np.vstack([left, np.flipud(right)])
-            elif left is not None:
-                all = left
-            else:
-                all = right
+        if (left is not None) and (right is not None):
+            all = np.vstack([left, np.flipud(right)])
             color = LaneColor.Valid if (left_valid and right_valid) else \
                 (LaneColor.Cached if left_valid or right_valid else LaneColor.Warning)
             measurement_alpha = 0.4 if left_valid and right_valid else 0.1
             cv2.fillPoly(img_alpha, [all], color.value, lineType=cv2.LINE_AA)
+
+            center = (left + right) / 2
+            if center_prev is not None:
+                center = center * center_alpha + center_prev * (1 - center_alpha)
+            center_prev = center
+            cv2.polylines(img, [np.int32(center)], False, (0.55, 0.85, 0.0), 3, lineType=cv2.LINE_AA)
+
             img = cv2.addWeighted(img, (1 - measurement_alpha), img_alpha, measurement_alpha, 0)
+        else:
+            center_prev = None
 
         # Draw the lane lines
         if left is not None:
