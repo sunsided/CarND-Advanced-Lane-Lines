@@ -333,7 +333,7 @@ so some more engineering is required there as well.
 
 Most of the operations are done in vain: For example, it is not required to perform edge detection, convolutions or template matching on the whole image if only a fraction of it is
 going to be searched anyway. When search restarts from a previous fit, only edges within and/or around the previous search windows need to be calculated. Likewise, if search is starting
-from scratch, a edges in the bottom part of the image are required in addition to the search windows. Most of the time, the edges of the top of the image never are evaluated. Likewise,
+from scratch, only additional edges in the bottom part of the image are required in addition to the search windows. Most of the time, the edges of the top of the image never are evaluated. Likewise,
 calculation intensive operations such as template matching can be performed on locations where lane lines are expected only; that is, rather than convolving the whole image with the
 templates, a Canny detector can be used to obtain _possible_ lane lines, which then need to be verified or discarded using a more exact algorithm. This kind of cascaded operation helps
 speeding up e.g. face detections like the Viola-Jones algorithm and are, generally speaking, suitable to this scenario as well.
