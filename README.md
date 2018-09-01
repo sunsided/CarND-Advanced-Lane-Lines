@@ -300,7 +300,7 @@ That is the square root of (one plus (the square of (the curve's first derivate 
 
 Since the lane lines are designed to be positioned at the locations `x=100` and `x=200`, we know that the lane center is expected to be at `x=150`. By taking the arithmetic
 mean of the _actual_ lane positions at the bottom of the image and determining the deviation from the expected position, we can (by normalizing) determine the absolute deviation from
-the lane center in percent (of a half half) and, ultimately, meters.
+the lane center in percent (of a half lane) and, ultimately, meters.
 
 #### 6. Rendering the results into the original image
 
