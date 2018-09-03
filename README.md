@@ -315,9 +315,11 @@ Finally, the fit is backprojected using the inverse perspective transform and re
 #### 1. Discussions of problems and pitfalls
 
 The implemented pipeline is far from perfect and definitely tailored towards the scenarios observed in the project videos. Because of that, most assumptions that are taken are
-likely to be invalid if the time of the day, the sky or simply the country changes. For example, if a lane fit is lost, one could argue that "staying at the right" side of the
-lane is a good idea - that is, unless you are in Britain, Hong Kong etc., where people drive on the left. At night, the color of the white lane lines might shift to a blue or
-red tint, depending on the street lights, so color corrections would be required.
+likely to be invalid if the time of the day, the sky or simply the country changes. Even though it is not related to
+_detecting_ lane lines (rather than _relying_ on detections), here's an example that shows how simple assumptions can heavily break in the real world: If a car
+is to be steered according to the detected lane and a lane fit is lost, one could assume that "staying at the right" side
+of the lane is a good idea - that is, unless you are in Britain, Hong Kong etc., where people drive on the left; suddenly you'd find yourself becoming a ghost driver.
+As for the actual lane lines, at night, the color of the white lane lines might shift to a blue or red tint, depending on the street lights, so color corrections would be required. Under foliage, white stripes might reflect the green much more, etc.
 
 A lot of trouble in the challenge videos also comes from the static exposure setup of the camera. If the camera was able to adjust for overexposure e.g. by reducing shutter times,
 clearer views on the street could be obtained without having to fiddle around with thresholds that much. Reflections of the dashboard could be reduced by finding a better placement
@@ -327,9 +329,10 @@ such as Kalman and particle filters could be used to their full power if more in
 etc. For example, lane fits could be evolved over time given that we know the direction of the wheels and the current speed.
 
 When the street is not flat or the lane is oriented orthogonal to the camera, all assumptions about the orientation of edges are basically invalid. That means that when entering a
-road, obtaining an understanding of lanes is close to impossible. And even if the lane is oriented with the view, the lane line might either not exist or be hidden to begin with,
-as it is in certain parts of the "harder challenge" video. Relying on intensity spikes only can also be a problem in the presence of bright metal surfaces such as a crash barrier,
-so some more engineering is required there as well.
+road, obtaining an understanding of lanes is close to impossible; even more so since the marching boxes search assumes the lane line to start somewhere near the bottom and move mostly upwards.
+Even if the lane is oriented with the view, depending on the street, the lane line might still not exist or be hidden
+to begin with, as it is indeed the case in certain parts of the "harder challenge" video. Relying on intensity spikes
+only can also be a problem in the presence of bright metal surfaces such as a crash barrier, so some more engineering is required there as well.
 
 Most of the operations are done in vain: For example, it is not required to perform edge detection, convolutions or template matching on the whole image if only a fraction of it is
 going to be searched anyway. When search restarts from a previous fit, only edges within and/or around the previous search windows need to be calculated. Likewise, if search is starting
