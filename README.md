@@ -342,8 +342,12 @@ templates, a Canny detector can be used to obtain _possible_ lane lines, which t
 speeding up e.g. face detections like the Viola-Jones algorithm and are, generally speaking, suitable to this scenario as well.
 
 Searching the lane line using marching boxes - which is susceptible to errors in the proposal generation, as was shown above - could be avoided entirely in favor of directly attempting
-to fit a polynomial or spline using probabilistic approaches such as RANSAC, where the search could be conditioned with information from previous frames as well. Using superpixel
-techniques such as SLIC on the original image before performing edge detection could help reducing noise while isolating lane lines from their surroundings. However, as the template
-matching approach has shown, relying on thresholds and channel combinations might just be the wrong approach to tackle this problem. The next time around, I would treat the whole project
-as a machine learning problem where polynomial or spline coefficients would be predicted directly from the image. It certainly makes the whole project a data problem, rather than an
+to fit a polynomial or spline using probabilistic approaches such as RANSAC, where the search could be conditioned with 
+information from previous frames as well. Fitting a spline might be beneficial as lanes are clothoids (i.e. paths of
+constant angular acceleration) and can only be approximated locally using second-order polynomials. The further
+we look ahead, the worse the second-order polynomial approximation of the lane will be.
+For preprocessing the images, using superpixel techniques such as SLIC on the original image before performing edge detection could help reducing noise while isolating lane lines from their surroundings. 
+
+However, as the template matching approach has shown, relying on thresholds and channel combinations might just be the wrong approach to tackle this problem. The next time around, I would treat the whole project
+as a machine learning (e.g. deep learning) problem, where polynomial or spline coefficients would be predicted directly from the image. It certainly makes the whole project a data problem, rather than an
 engineering one, but even the naive template matching outcomes look much more promising than anything else I tried.
